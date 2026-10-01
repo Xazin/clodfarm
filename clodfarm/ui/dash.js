@@ -276,7 +276,7 @@ function widget(w, ctx) {
 }
 
 // -------------------------------------------------------------------- pages
-const App = { days: 30, selected: null, key: "", timer: null, slug: null, folder: "", editing: null };
+const App = { days: 30, selected: null, key: "", timer: null, slug: null, folder: "", editing: null, busy: false, refreshError: "" };
 try { App.days = Number(localStorage.getItem("clodfarm.dash.days")) || 30; } catch { /* storage may be blocked */ }
 const RANGE_LABEL = { 1: "vs 24h ago", 7: "vs 7d ago", 30: "vs 30d ago", 90: "vs 90d ago" };
 
@@ -320,7 +320,8 @@ function dashCard(r, folders) {
       sparkline(st.points)))) : h("p", { class: "muted small", text: `${r.widgets} widget${r.widgets === 1 ? "" : "s"}` }),
     h("div", { class: "card-foot" },
       h("span", { text: `Updated ${ago(r.updated)}` }), r.owner ? h("span", { text: `by ${r.owner}` }) : null,
-      r.live ? h("span", { class: `badge${r.ok === false ? " bad" : ""}` }, h("i", { class: "dot" }), r.ok === false ? "REFRESH FAILING" : `LIVE · EVERY ${every(r.every).toUpperCase()}`) : null));
+      r.refreshing ? h("span", { class: "badge busy" }, h("i", { class: "dot" }), "REFRESHING")
+        : r.live ? h("span", { class: `badge${r.ok === false ? " bad" : ""}` }, h("i", { class: "dot" }), r.ok === false ? "REFRESH FAILING" : `LIVE · EVERY ${every(r.every).toUpperCase()}`) : null));
   const moving = App.editing === `move:${r.slug}`;
   return h("div", { class: "dash-slot" }, card,
     moving ? h("div", { class: "card slot-form" }, inlineForm({ value: r.folder, label: `MOVE “${r.title}” TO`, hint: "Folder, e.g. Growth/Leads (empty: top level)",
@@ -334,7 +335,7 @@ async function listPage(quiet) {
   crumbs(parts(here).at(-1) || null, parts(here).slice(0, -1).join("/"));
   $("#range").hidden = true;
   let rows;
-  try { rows = await api("dashboards"); }
+  try { rows = await api("dashboards"); App.busy = rows.some(r => r.refreshing); }
   catch (e) { if (e.status === 403) return App.key === "403" ? null : forPeople(); if (!quiet) fill($("#main"), h("p", { class: "muted", text: e.message })); return; }
   const key = JSON.stringify([rows, here, App.editing]);
   if (key === App.key || (quiet && App.editing)) return; // never redraw under a half-typed folder name
@@ -392,7 +393,7 @@ async function dashPage(slug, quiet) {
   $("#range").hidden = false;
   for (const b of $$("#range button")) b.setAttribute("aria-pressed", String(Number(b.dataset.days) === App.days));
   let d;
-  try { d = await api(`dashboards/${slug}?days=${App.days}`); }
+  try { d = await api(`dashboards/${slug}?days=${App.days}`); App.busy = !!d.requested?.busy; }
   catch (e) {
     if (e.status === 403) return App.key === "403" ? null : forPeople();
     if (quiet) return;
@@ -411,16 +412,24 @@ async function dashPage(slug, quiet) {
   const statList = Object.values(stats);
   if (!statList.some(x => x.key === App.selected)) App.selected = statList[0]?.key || null;
 
+  const q = d.requested, busy = !!q?.busy;
   const meta = h("div", { class: "meta" },
+    d.can_refresh || busy ? refreshButton(d) : null,
     h("span", { class: "chip" }, "UPDATED ", h("b", { text: ago(d.updated).toUpperCase() })),
     d.owner ? h("span", { class: "chip" }, "KEPT BY ", h("b", { text: d.owner.toUpperCase() })) : null,
     d.refresh ? h("span", { class: `chip${d.refresh.ok === false ? " bad" : ""}`, title: `Runs \`${d.refresh.cmd}\` in the repo` },
-      h("i", { class: "dot" }), d.refresh.ok === false ? "REFRESH FAILING" : ["LIVE · EVERY ", h("b", { text: every(d.refresh.every).toUpperCase() })]) : null,
+      h("i", { class: "dot" }), d.refresh.ok === false ? "REFRESH FAILING"
+        : d.refresh.every ? ["LIVE · EVERY ", h("b", { text: every(d.refresh.every).toUpperCase() })] : "ON DEMAND") : null,
     d.refresh ? h("span", { class: "chip cmd", text: d.refresh.cmd }) : null);
   const out = [h("div", { class: "page-head" }, h("h1", { text: d.title }), d.description ? h("p", { class: "lede", text: d.description }) : null, meta)];
+  if (App.refreshError) out.push(h("div", { class: "banner", role: "alert" },
+    h("strong", { text: "Could not refresh it. " }), App.refreshError));
   if (d.refresh?.ok === false) out.push(h("div", { class: "banner", role: "alert" },
     h("strong", { text: `The last refresh failed (${ago(d.refresh.last_at)}). ` }), "The page shows the last good data, and the Claude that keeps it got a message to fix it.",
     h("pre", { text: d.refresh.error || "" })));
+  else if (q?.kind === "agent" && q.ok === false && q.done_at >= (d.updated || 0)) out.push(h("div", { class: "banner", role: "alert" },
+    h("strong", { text: `The refresh you asked for didn't bring new data (${ago(q.done_at)}). ` }), "The page shows the last data its Claude pushed.",
+    h("pre", { text: q.error || "" })));
 
   if (statList.length) {
     const sel = stats[App.selected];
@@ -443,12 +452,38 @@ async function dashPage(slug, quiet) {
   fill($("#main"), out);
 }
 
+/** REFRESH: runs the dashboard's code now, or starts a sub-agent of its Claude to collect the data and push it. While
+ * it works the page checks every few seconds, so the new numbers show the moment they land. */
+function refreshButton(d) {
+  const q = d.requested, busy = !!q?.busy, cmd = !!d.refresh;
+  const who = d.owner ? d.owner.toUpperCase() : "ITS CLAUDE";
+  const label = busy ? (q.kind === "agent" ? `${who} IS COLLECTING…` : "REFRESHING…") : "REFRESH";
+  const title = busy ? `Asked ${ago(q.at)} ago` + (q.kind === "agent" ? `: a sub-agent of ${d.owner || "its Claude"} is collecting fresh data` : "")
+    : cmd ? `Run \`${d.refresh.cmd}\` now and show what it measures`
+      : `Start a sub-agent of ${d.owner || "its Claude"} to collect fresh data and push it` + (d.agent ? "" : " (it has no refresh code yet)");
+  return h("button", { type: "button", class: `btn primary refresh${busy ? " busy" : ""}`, disabled: busy || !d.can_refresh, title,
+    "aria-busy": String(busy), onclick: async (e) => {
+      e.currentTarget.disabled = true; App.refreshError = "";
+      try { await post(`dashboards/${d.slug}/refresh`, {}); }
+      catch (x) { App.refreshError = x.message; }
+      App.key = ""; route(true);
+    } }, h("span", { class: "spin", "aria-hidden": "true" }), label);
+}
+
+/** Look again soon while a refresh is under way, else every 30 s (live dashboards change on their own). */
+function schedule(busy) {
+  clearTimeout(App.timer);
+  App.timer = setTimeout(() => { if (!document.hidden) route(true); else schedule(false); }, busy ? 3000 : 30000);
+}
+
 function route(quiet = false) {
   const rel = location.pathname.slice(BASE.length).replace(/\/+$/, "");
   const m = rel.match(/^\/dashboards\/([a-z0-9-]{1,48})$/);
+  if ((m ? m[1] : null) !== App.slug) App.refreshError = "";
   App.slug = m ? m[1] : null;
   App.folder = new URLSearchParams(location.search).get("folder") || "";
-  return App.slug ? dashPage(App.slug, quiet) : listPage(quiet);
+  App.busy = false;
+  return Promise.resolve(App.slug ? dashPage(App.slug, quiet) : listPage(quiet)).finally(() => schedule(App.busy));
 }
 
 $("#range").addEventListener("click", (e) => {
@@ -467,5 +502,5 @@ addEventListener("keydown", (e) => {
     next.click(); requestAnimationFrame(() => $$(".tab")[tabs.indexOf(next)]?.focus());
   }
 });
+addEventListener("visibilitychange", () => { if (!document.hidden) route(true); });
 route();
-App.timer = setInterval(() => { if (!document.hidden) route(true); }, 30000); // live dashboards change on their own

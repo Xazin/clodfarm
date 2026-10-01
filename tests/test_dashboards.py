@@ -194,3 +194,93 @@ def test_folders_from_the_cli_and_the_page(env, store, tmp_path, capsys, ui):  #
     code, rows, _ = call(base + "/api/dashboards/rename-folder", {"from": "Ops", "to": "Platform"})
     assert code == 200 and [r["folder"] for r in rows if r["slug"] == "perf"] == ["Platform/Speed"]
     assert call(base + "/api/dashboards/perf/move", {"folder": "a/b/c/d"})[0] == 400
+
+
+def test_refresh_button_runs_code_or_starts_a_sub_agent(store, tmp_path):
+    script = tmp_path / "measure.py"
+    script.write_text("import json\nprint(json.dumps({'widgets': [{'type': 'stat', 'key': 'n', 'value': 8}]}))\n")
+    dash.push(store, "manual", {"widgets": []}, owner="gil")
+    with pytest.raises(dash.SpecError, match="only a command"):
+        dash.set_refresh(store, "manual", agent="count them", every=3600)
+    with pytest.raises(dash.SpecError, match="not both"):
+        dash.set_refresh(store, "manual", "true", agent="count them")
+    dash.set_refresh(store, "manual", f"{sys.executable} {script}")             # no interval: only by hand
+    store._update("DASH", "manual", lambda x: {**x, "refresh": {**x["refresh"], "next_at": 1}})
+    assert dash.claim_due(store) == [] and dash.summary(store, dash.get(store, "manual"))["live"] is False
+    d = dash.request_refresh(store, "manual", by="person:gil")
+    assert d["requested"]["kind"] == "cmd" and dash.view(store, d)["requested"]["busy"]
+    with pytest.raises(dash.SpecError, match="already refreshing"):              # two clicks: one run
+        dash.request_refresh(store, "manual")
+    assert dash.refresh(store, d, str(tmp_path))["ok"]
+    v = dash.view(store, dash.get(store, "manual"))
+    assert v["requested"]["ok"] is True and not v["requested"]["busy"] and v["widgets"][0]["value"] == 8
+    assert store.list_tasks() == []                                              # code: no sub-agent
+
+    dash.push(store, "leads", SPEC, owner="gil")                                  # no code: its Claude collects
+    dash.set_refresh(store, "leads", agent="Count the leads in the CRM export")
+    d = dash.request_refresh(store, "leads", by="person:gil", to="gil", url="https://farm.test/dashboards/leads")
+    task = store.get_task(d["requested"]["task"])
+    assert task["to"] == "gil" and task["owner"] == "gil" and task["priority"] == 7
+    assert "Count the leads in the CRM export" in task["prompt"] and "clodfarm dashboard push leads" in task["prompt"]
+    assert "https://farm.test/dashboards/leads" in task["prompt"]
+    assert dash.summary(store, dash.get(store, "leads"))["refreshing"]
+    with pytest.raises(dash.SpecError, match="already refreshing"):
+        dash.request_refresh(store, "leads")
+    dash.set_metric(store, "leads", "pass_rate", 99, by=task["id"])               # the sub-agent pushes: done
+    q = dash.view(store, dash.get(store, "leads"))["requested"]
+    assert q["ok"] is True and not q["busy"]
+
+    d = dash.request_refresh(store, "leads", to="gil")                            # one that ends without pushing
+    store._set_status(d["requested"]["task"], "done", extra={"result": "the CRM export is missing"})
+    q = dash.view(store, dash.get(store, "leads"))["requested"]
+    assert q["ok"] is False and "without pushing" in q["error"] and "CRM export is missing" in q["error"]
+    dash.set_refresh(store, "leads", None)                                        # no instructions: the page is the brief
+    d = dash.request_refresh(store, "leads", to="gil")
+    assert "clodfarm dashboard show leads" in store.get_task(d["requested"]["task"])["prompt"]
+
+
+def test_refresh_from_the_page(ui, tmp_path):  # noqa: F811
+    base, farm_ui = ui
+    st = farm_ui.store
+    script = tmp_path / "measure.py"
+    script.write_text("import json\nprint(json.dumps({'widgets': [{'type': 'stat', 'key': 'n', 'value': 5}]}))\n")
+    dash.push(st, "code", {"widgets": []}, owner="someone-else")
+    dash.set_refresh(st, "code", f"{sys.executable} {script}")
+    dash.push(st, "asks", SPEC, owner="someone-else")
+    call = client()
+    assert call(base + "/api/dashboards/code/refresh", {})[0] == 403             # not one of the farm's people
+    login(call, base)                                                            # the manager
+    code, d, _ = call(base + "/api/dashboards/code")
+    assert code == 200 and d["can_refresh"] is True and d["requested"] is None
+    code, d, _ = call(base + "/api/dashboards/code/refresh", {})
+    assert code == 200 and d["requested"]["busy"] and d["requested"]["kind"] == "cmd"
+    deadline = time.time() + 15
+    while time.time() < deadline and call(base + "/api/dashboards/code")[1]["requested"]["busy"]:
+        time.sleep(0.1)
+    d = call(base + "/api/dashboards/code")[1]
+    assert d["requested"]["ok"] is True and d["widgets"][0]["value"] == 5         # ran on this box, at once
+    code, d, _ = call(base + "/api/dashboards/asks/refresh", {})
+    assert code == 200 and d["requested"]["task"]                                # the manager may start a sub-agent
+    assert call(base + "/api/dashboards/asks/refresh", {})[0] == 400             # already refreshing
+    assert call(base + "/api/dashboards/nope/refresh", {})[0] == 404
+    gil = farm_ui.manager.create("gil", start=False)                             # another Claude's person
+    dash.push(st, "gils", SPEC, owner=gil["id"])
+    theirs = client()
+    login(theirs, base, claude=gil["id"])
+    assert theirs(base + "/api/dashboards/asks")[1]["can_refresh"] is False      # not their Claude's usage
+    assert theirs(base + "/api/dashboards/asks/refresh", {})[0] == 403
+    assert theirs(base + "/api/dashboards/code")[1]["can_refresh"] is True       # code costs nothing: anyone runs it
+    code, d, _ = theirs(base + "/api/dashboards/gils/refresh", {})
+    assert code == 200 and st.get_task(d["requested"]["task"])["to"] == gil["id"]  # their own Claude collects
+
+
+def test_cli_refresh_options(env, store, tmp_path, capsys):
+    script = tmp_path / "m.py"
+    script.write_text("import json\nprint(json.dumps({'widgets': []}))\n")
+    assert cli(["dashboard", "push", "m", "--run", f"{sys.executable} {script}", "--every", "manual"]) == 0
+    assert "Refresh button" in capsys.readouterr().out
+    assert "every" not in dash.get(store, "m")["refresh"]
+    assert cli(["dashboard", "push", "m", "--agent", "count it", "--every", "1h"]) == 2
+    assert cli(["dashboard", "push", "m", "--agent", "count it"]) == 0
+    assert dash.get(store, "m")["refresh"] == {"agent": "count it", "by": dash.get(store, "m")["refresh"]["by"]}
+    assert cli(["dashboard", "refresh", "m"]) == 1                               # no code to run

@@ -10,10 +10,12 @@ no agent-written code runs in the browser.
 clodfarm dashboard metric tests pass_rate 97.2 --unit % --good up       # one number (adds the dashboard when new)
 clodfarm dashboard push tests --file spec.json                           # the whole page
 clodfarm dashboard push tests --run "python3 dashboards/tests.py" --every 1h   # live: the farm runs it
+clodfarm dashboard push tests --run "python3 dashboards/tests.py" --every manual  # only on REFRESH
+clodfarm dashboard push leads --agent "Count this week's leads in the CRM export and push them"  # REFRESH asks a Claude
 clodfarm dashboard list | show NAME | refresh NAME | remove NAME
 ```
 
-Over MCP: `farm_dashboards` and `farm_dashboard_push`.
+Over MCP: `farm_dashboards` and `farm_dashboard_push` (its `refresh` is the same as `--agent`).
 
 ## The spec
 
@@ -53,3 +55,19 @@ in the repo on main on that schedule, on one box of a multi-box farm, and pushes
 Commit the code so every box has it. When a run fails, the page shows the error and keeps the last good data, and the
 Claude that keeps it gets a message (with `--wake`, so a sub-agent starts to fix it if nobody reads it).
 `FARM_DASHBOARD_TIMEOUT` (default 300 s) limits a run.
+
+## The REFRESH button
+
+Every dashboard's page has a REFRESH button, for when you want the numbers now:
+
+- **With code** (`--run`, on a schedule or `--every manual`), it runs that code at once on the box that serves the
+  page and pushes what it prints. Anyone on the farm may press it.
+- **Without code**, it starts a sub-agent of the Claude that keeps the dashboard (its owner) to collect the data and
+  push it again: with the instructions from `--agent` (or `refresh` over MCP), or else with the dashboard itself as
+  the brief. Only that Claude's person and the farm manager may press it, since it spends that Claude's usage, and a
+  Claude whose person approves every mission asks them first when the manager presses it.
+
+While it works the button spins and the page checks every few seconds, so the new numbers show as soon as they are
+pushed. Two clicks (or two people) start one refresh. A command that fails shows its error as before; a sub-agent that
+ends without pushing (or hasn't pushed within an hour) shows why on the page. Code is faster and costs nothing: a
+Claude that is asked to refresh a dashboard by hand is told how to make it code next time.

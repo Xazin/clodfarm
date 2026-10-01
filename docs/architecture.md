@@ -53,6 +53,8 @@ instead of losing it; see [upgrades.md](upgrades.md).
 | `policy.py` | The tools a Claude's person turned off, and the PreToolUse decision. |
 | `planner.py` | The planner's cycles. |
 | `web.py` | The farm UI: roles (public, viewer, owner, manager), hatching, approvals, the manager panel. |
+| `boards.py` | Every Claude's whiteboard: its elements, revisions and what a page asks for. |
+| `diagram.py` | Mermaid flowcharts (or nodes and edges) laid out in layers, as whiteboard elements. |
 
 ## Data model (one table, same shape in SQLite and DynamoDB)
 
@@ -78,6 +80,8 @@ instead of losing it; see [upgrades.md](upgrades.md).
 | `CONTROL` | `SETTINGS` / `PLANNER` / `BOX#<host>` | The manager's switches (private farm, hatching); the planner; `clodfarm drain`. |
 | `STATS` | `TOKENS`, `TOKENS#<day>`, `TOKENS@<claude>`, `TOKENS#<day>@<claude>` | Tokens burned (input, output, cache write, cache read). |
 | `PAIR` | `<token hash>` | A one-time pairing link or code (10 minutes). |
+| `BOARD` | `<claude>` | A Claude's whiteboard: its revision, how many elements, who changed it last. |
+| `BOARDI#<claude>` | `<element id>` | One element on it (or, for an hour, the tombstone of a removed one). |
 
 A task can also be `pending` (waiting for its Claude's person to approve it; never claimed) and `denied`.
 

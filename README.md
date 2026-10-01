@@ -34,7 +34,7 @@ brings people to it. Every piece is connected once, for every Claude on the farm
 | <img src="assets/icons/aws.svg" width="18" height="18" align="top" alt=""> **Builds apps in the cloud** | The Claudes write the app, test it and deploy it to your AWS account: landing pages, APIs, a small SaaS. Serverless, inside a fenced role with a hard monthly budget cap, in an account of its own if you like ([details](#let-the-farm-build-apps-on-aws-optional)). |
 | <img src="assets/icons/stripe.svg" width="18" height="18" align="top" alt=""> **Takes payments with Stripe** | Connect the farm's Stripe once (CONNECTORS): every Claude can make products, prices and payment links, send invoices, run subscriptions and see what came in ([docs](docs/connectors.md#stripe)). |
 | <img src="assets/icons/google-ads.svg" width="18" height="18" align="top" alt=""> **Brings traffic with Google Ads** | Connect Google Ads once (CONNECTORS): the Claudes report on spend, clicks and conversions, and change budgets, bids and campaigns ([docs](docs/connectors.md#google-ads)). |
-| <img src="assets/icons/chart-column.svg" width="18" height="18" align="top" alt=""> **Shows you it's working** | Live dashboards the farm keeps fresh: sign-ups, revenue, ad spend, cost per customer ([docs](docs/dashboards.md)). |
+| <img src="assets/icons/chart-column.svg" width="18" height="18" align="top" alt=""> **Shows you it's working** | Live dashboards the farm keeps fresh: sign-ups, revenue, ad spend, cost per customer. **REFRESH** gets the numbers now: it runs the dashboard's code, or has its Claude collect them ([docs](docs/dashboards.md)). |
 
 Ask your Claude from your phone: *"Build a landing page for the invoice tool with a $9 a month plan, put it live, and
 start a $20 a day search campaign for it."* It builds and deploys the page, makes the Stripe price and payment link,
@@ -52,6 +52,8 @@ your week.
 - **Claudes work together:** each one is a person's own account. They message each other and run sub-agents on
   whichever account has room.
 - **Every account is paced on its real 5-hour and weekly usage**, measured the moment it joins and kept current.
+- **A whiteboard for every Claude:** you sketch, it draws whole architectures (Mermaid, laid out by the farm),
+  flows, plans and art, live, and everyone on the farm sees every board. See [docs/whiteboard.md](docs/whiteboard.md).
 - **Bots add capacity without Claude usage:** Claude Code on a free or local model (OpenRouter, Ollama) takes the
   well-specified jobs your Claudes send it. See [docs/bots.md](docs/bots.md).
 
@@ -86,7 +88,8 @@ through your limits. clodfarm is the operations layer it's missing:
 | <img src="assets/icons/users.svg" width="18" height="18" align="top" alt=""> **Claudes that work together** | Teammates' Claudes message each other and run work on whoever has budget left. |
 | <img src="assets/icons/shield-check.svg" width="18" height="18" align="top" alt=""> **Nothing lands untested** | Work reaches main only when your tests pass. |
 | <img src="assets/icons/clock.svg" width="18" height="18" align="top" alt=""> **Schedules** | "Every weekday at 9, triage new issues." Cron, intervals or one-offs. |
-| <img src="assets/icons/chart-column.svg" width="18" height="18" align="top" alt=""> **Dashboards** | The Claudes keep live pages that show what is improving ([docs](docs/dashboards.md)). |
+| <img src="assets/icons/chart-column.svg" width="18" height="18" align="top" alt=""> **Dashboards** | The Claudes keep live pages that show what is improving, each with a REFRESH button ([docs](docs/dashboards.md)). |
+| <img src="assets/icons/presentation.svg" width="18" height="18" align="top" alt=""> **Whiteboards** | Sketch for your Claude and it draws back: architectures from Mermaid, flows, plans, sticky notes, live for everyone on the farm ([docs](docs/whiteboard.md)). |
 | <img src="assets/icons/globe.svg" width="18" height="18" align="top" alt=""> **A browser, logged in** | Log in to a site once in the farm's browser (LinkedIn, an admin panel) and every Claude works there as you, in the window you watch ([docs](docs/browser.md)). |
 | <img src="assets/icons/slack.svg" width="18" height="18" align="top" alt=""> **Slack** | DM or @mention the farm and a sub-agent answers in the thread. Two-minute setup ([docs](docs/slack.md)). |
 | <img src="assets/icons/box.svg" width="18" height="18" align="top" alt=""> **Blender** | Connect a Blender MCP server once (CONNECTORS): every Claude builds scenes and game assets, animates, renders and exports on the machine that runs Blender ([docs](docs/connectors.md#blender)). |
@@ -357,7 +360,8 @@ Details and caveats: [docs/auth.md](docs/auth.md).
 | `clodfarm msg NAME\|ID TEXT [--urgent] [--wake]` · `inbox` | messages to a Claude or a sub-agent |
 | `clodfarm sessions` · `session ID` | every Claude session on the farm, and its whole conversation |
 | `clodfarm schedule add TITLE (--cron ... [--tz ...] \| --every 2h \| --at ...)` / `list` / `remove ID` | scheduled tasks |
-| `clodfarm dashboard push NAME --file spec.json` / `push NAME --run CMD --every 1h` / `metric NAME KEY VALUE` / `list` / `show` / `refresh` / `remove` | dashboards at `/dashboards/<name>` |
+| `clodfarm dashboard push NAME --file spec.json` / `push NAME --run CMD --every 1h\|manual` / `push NAME --agent "how to get the numbers"` / `metric NAME KEY VALUE` / `list` / `show` / `refresh` / `remove` | dashboards at `/dashboards/<name>` |
+| `clodfarm board` · `board diagram --file FILE` / `note` / `shape` / `connect` / `list` | whiteboards at `/whiteboard/<claude>` ([docs/whiteboard.md](docs/whiteboard.md)) |
 | `clodfarm events [-f]` | the event log: sub-agents, merges, checks, messages, pauses, limits |
 | `clodfarm connect` · `connections` · `disconnect ID` | Claude Code on your computer, over MCP ([docs/mcp.md](docs/mcp.md)) |
 | `clodfarm pause [reason]` / `resume` | stop and restart new sub-agents on every box |

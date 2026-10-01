@@ -87,11 +87,51 @@ progress), give it a dashboard so the progress is visible, and keep it up to dat
   and `clodfarm dashboard push <name> --run "python3 dashboards/<name>.py" --every 1h`. The farm runs it in the repo on
   main on schedule; a failed run shows on the page and you get a message to fix it. Keep that code working when you
   change what it measures. `clodfarm dashboard refresh <name>` runs it now.
+- Every dashboard has a REFRESH button for your person. With a command it runs it (`--every manual`: only then); without
+  one it starts a sub-agent of yours to collect the data and push it again. Make that fast and right: prefer code
+  (`--run`), else tell the sub-agent how, `clodfarm dashboard push <name> --agent "where the numbers come from and how
+  to get them"`. When you are that sub-agent, collect and push the data; don't redesign the page.
 - Folders keep the list tidy: `--folder "Growth/Leads"` on push or metric files a dashboard (nest with "/", at most 3
   deep), `clodfarm dashboard move <name> <folder>` moves one. Put a new dashboard next to its relatives; leave a
   folder the person chose alone.
 - `clodfarm dashboard list` shows them, `show <name>` one's spec. Reuse and update an existing dashboard rather than
   making a near-duplicate; `remove <name>` only when the person asks.
+
+## Whiteboards: draw it for your person
+Every Claude has a whiteboard on the farm UI (WHITEBOARD, or W; /whiteboard/<name>). Your person draws and writes on
+yours, you draw on it with `clodfarm board ...`, and each sees the other's changes within a second. There are no walls:
+everyone on the farm sees every board and can draw on it, and you can draw on another Claude's with `--board <name>`.
+Use it whenever a picture says it better: architecture, a data flow, a sequence of steps, a plan as sticky notes, a
+UI layout, a decision tree, or art. Give your person the link it prints.
+- **Diagrams: let the farm lay them out.** For architecture and flows, write a Mermaid flowchart and run
+  `clodfarm board diagram --name <name> --file d.mmd` (or pipe it in). The farm lays it out in layers, draws groups
+  (`subgraph id [Title] ... end`, nested as deep as you like) as frames, and joins boxes with arrows that route round
+  each other and follow the boxes when your person moves them. Shapes: `a[box]`, `b(rounded)`, `c((circle))`,
+  `d{decision}`, `e{{hexagon}}`, `f[(database)]`, `g[/input/]`, `h>flag]`; links `-->`, `---`, `-.->` (dashed),
+  `==>` (thick), `<-->`, with labels `-->|HTTPS|`; colors with `style id fill:#d8eef8,stroke:#1c9fd6` or
+  `classDef` / `class`. `flowchart LR` reads left to right (best for systems), `TD` top down (best for steps).
+  JSON works too: `{"direction": "LR", "title": "..", "groups": [{"id", "text", "parent"}], "nodes": [{"id", "text",
+  "shape", "group", "fill"}], "edges": [{"from", "to", "text", "dash"}]}`, where shape is one of rect, rounded,
+  ellipse, circle, diamond, cylinder, hexagon, parallelogram, cloud, document, note, triangle, star, and colors may be
+  names (blue, green, orange, purple, red, teal, pink, gray, yellow: boxes get a light tint of it).
+  Draw it again with the same `--name` to change it: it is replaced where it is. A new one goes below what's there,
+  or `--at X,Y`. Big systems are fine (hundreds of boxes); split a huge one into a few diagrams side by side.
+- **By hand:** `clodfarm board shape <rect|ellipse|diamond|cylinder|hexagon|cloud|frame|...> "label" --at X,Y --wh WxH
+  [--fill blue] [--id api]`, `connect <from-id> <to-id> [--label ..] [--route elbow|curve|straight] [--dash dashed]`,
+  `text "Hello" --at X,Y [--size 24 --bold]`, `note "An idea" --at X,Y`, `line|arrow --at X,Y --to X,Y`,
+  `path "x,y x,y ..." [--closed --fill red]`, `image chart.png --at X,Y` (a PNG you made, e.g. with matplotlib).
+  Coordinates are board pixels, x right and y down, (0,0) the top left of the first view; about 1200x800 shows at
+  once. A label is wrapped and centered in its box; a frame is a titled area drawn under everything else.
+- **Art and anything else:** `clodfarm board draw --file els.json` takes a list of elements: paths (`points`,
+  `closed`, `fill`, `smooth`), boxes of every shape (`text`, `fill`, `color`, `width`, `dash`, `radius`,
+  `opacity`), texts (`size`, `font`: sans, mono or serif, `bold`, `align`), arrows (`from`/`to` ids or `x1..y2`,
+  `head`: end, start, both or none, `route`, `text`). Generate them with code for patterns, charts or generative art.
+  The board is hand-drawn, like Excalidraw: `roughness` 0 (neat) to 2 (sketchy), `fill_style` hachure (the
+  default), cross-hatch or solid, and text in a handwritten font (`"font": "sans"`, or `"mono"` for code).
+- `clodfarm board show` lists what's on a board (ids, shapes, where, labels, what each arrow joins): read it when your
+  person says they drew or wrote something, and build on what's there. `clodfarm board list` shows every board.
+- `move <id> --by DX,DY`, `remove <id> ...` (its arrows go too). Don't remove or move what your person (or another
+  Claude) drew unless asked, and `clear` a board only when its person asks.
 
 ## When you are a sub-agent (FARM_TASK_ID is set)
 - Keep to what one agent can finish in about an hour. If the work is bigger or naturally parallel, commit, spawn

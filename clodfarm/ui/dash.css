@@ -151,6 +151,15 @@ h1, h2, h3 { font-family: var(--font-px); font-weight: 400; letter-spacing: .5px
 .btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
 .btn.primary { background: var(--clay); color: #fff; border-color: #6b2f1f; box-shadow: 0 3px 0 #6b2f1f; }
 .btn.small { font-size: 7px; padding: 7px 8px; }
+/* a dashboard's REFRESH: a spinner shows while its code runs or its Claude collects */
+.btn.refresh { display: inline-flex; align-items: center; gap: 8px; }
+.btn.refresh .spin { display: inline-block; width: 10px; height: 10px; border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; }
+.btn.refresh.busy .spin { animation: spin .8s linear infinite; }
+.btn.refresh:disabled { cursor: default; opacity: .9; }
+.btn.refresh:disabled:active { transform: none; box-shadow: 0 3px 0 #6b2f1f; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.badge.busy { color: var(--clay-2); }
 .dash-slot > .move { position: absolute; right: 14px; bottom: 14px; opacity: .75; }
 .dash-slot:hover > .move, .dash-slot > .move:focus-visible { opacity: 1; }
 .dash-slot > .dash-card .card-foot { padding-right: 70px; }
@@ -254,4 +263,4 @@ td a { color: var(--clay-2); }
   .logo { font-size: 13px; text-shadow: 1px 1px 0 var(--clay-2), 2px 2px 0 #3b2317; }
   .logo img { width: 21px; height: 24px; }
 }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } .btn.refresh .spin { animation-duration: 3s; } }

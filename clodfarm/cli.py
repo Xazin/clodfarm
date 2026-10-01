@@ -701,6 +701,162 @@ def _farm_url() -> str:
             + ("/" + os.environ.get("FARM_UI_BASE", "").strip("/") if os.environ.get("FARM_UI_BASE", "").strip("/") else "")).rstrip("/")
 
 
+def _xy(v: str, what: str) -> tuple[float, float]:
+    try:
+        x, y = (float(p) for p in str(v).replace("x", ",").split(","))
+        return x, y
+    except ValueError:
+        raise ValueError(f"{what}: give two numbers, like 100,80") from None
+
+
+def _image_size(raw: bytes) -> tuple[int, int] | None:
+    """A PNG's, GIF's or JPEG's width and height, from its header."""
+    import struct
+    if raw[:8] == b"\x89PNG\r\n\x1a\n":
+        return struct.unpack(">II", raw[16:24])
+    if raw[:6] in (b"GIF87a", b"GIF89a"):
+        return struct.unpack("<HH", raw[6:10])
+    if raw[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 < len(raw):
+            if raw[i] != 0xFF:
+                return None
+            m, n = raw[i + 1], struct.unpack(">H", raw[i + 2:i + 4])[0]
+            if 0xC0 <= m <= 0xCF and m not in (0xC4, 0xC8, 0xCC):
+                h, w = struct.unpack(">HH", raw[i + 5:i + 9])
+                return w, h
+            i += 2 + n
+    return None
+
+
+def cmd_board(cfg, a):
+    from . import boards
+    store = _store(cfg)
+    me = os.environ.get("FARM_OWNER") or cfg.name
+    claude, by = (getattr(a, "board", None) or me).strip(), f"claude:{cfg.name}"
+    link = f"{_farm_url()}/whiteboard/{claude}"
+    try:
+        if a.sub == "list":
+            metas = {m["SK"]: m for m in boards.all_(store)}
+            names = sorted({c["name"] for c in _claudes(cfg, store)} | set(metas) | {me})
+            rows = [{"board": n, "things": int((metas.get(n) or {}).get("count", 0)),
+                     "updated": (metas.get(n) or {}).get("updated"), "url": f"{_farm_url()}/whiteboard/{n}"} for n in names]
+            _out(rows, a.json, "\n".join(f"  {r['board']:<20} {r['things']:>5} thing(s)  "
+                                         f"{(_ago(r['updated']) + ' ago') if r['updated'] else 'empty':>9}  {r['url']}"
+                                         for r in rows))
+            return 0
+        if a.sub in (None, "show"):
+            els = boards.elements(store, claude)
+            _out({"board": claude, "url": link, "elements": els}, a.json,
+                 f"{claude}'s whiteboard: {len(els)} thing(s)  {link}\n"
+                 + ("\n".join("  " + boards.describe(e) for e in els) if els else "  (empty)"))
+            return 0
+        if a.sub == "clear":
+            boards.clear(store, claude, by)
+            print(f"cleared {claude}'s whiteboard  {link}")
+            return 0
+        if a.sub == "remove":  # and the connectors that joined them
+            gone = set(a.ids) | {e["id"] for e in boards.elements(store, claude)
+                                 if e.get("from") in a.ids or e.get("to") in a.ids}
+            r = boards.apply(store, claude, [{"op": "del", "id": i} for i in sorted(gone)], by)
+            print(f"removed {len(r['items'])} thing(s)  {link}")
+            return 0 if r["items"] else 1
+        if a.sub == "move":
+            dx, dy = _xy(a.by, "--by")
+            el = next((e for e in boards.elements(store, claude) if e["id"] == a.id), None)
+            if not el:
+                print(f"no {a.id} on {claude}'s whiteboard (`clodfarm board show` lists them)", file=sys.stderr)
+                return 1
+            for k in ("x", "x1", "x2"):
+                if k in el:
+                    el[k] += dx
+            for k in ("y", "y1", "y2"):
+                if k in el:
+                    el[k] += dy
+            if "points" in el:
+                el["points"] = [[x + dx, y + dy] for x, y in el["points"]]
+            boards.apply(store, claude, [{"op": "put", "el": el}], by)
+            print(f"moved {a.id}  {link}")
+            return 0
+        if a.sub == "diagram":
+            from . import diagram
+            text = open(a.file).read() if a.file not in (None, "-") else sys.stdin.read()
+            name = a.name or "diagram"
+            tag = diagram._sid(name)[:24]
+            have = boards.elements(store, claude)
+            old = [e for e in have if e.get("diagram") == tag]
+            if a.at:
+                at = _xy(a.at, "--at")
+            elif old:  # drawn again: where it was
+                b = boards.bounds(old)
+                at = (b[0], b[1])
+            else:  # below what's on the board
+                b = boards.bounds(have)
+                at = (b[0], b[1] + b[3] + 120) if b else (40, 40)
+            els = diagram.build(text, name, at, direction=a.direction)
+            new = {e["id"] for e in els}
+            ops = [{"op": "del", "id": e["id"]} for e in old if e["id"] not in new]
+            r = boards.apply(store, claude, ops + [{"op": "put", "el": e} for e in els], by)
+            b = boards.bounds(els)
+            _out({**r, "bounds": b, "url": link}, a.json,
+                 f"diagram {tag} on {claude}'s whiteboard: {sum(e['type'] not in boards.LINES for e in els)} boxes, "
+                 f"{sum(e['type'] in boards.LINES for e in els)} arrows, at ({b[0]:g},{b[1]:g}) size {b[2]:g}x{b[3]:g}"
+                 f"{f' (replaced {len(old)})' if old else ''}  {link}")
+            return 0
+        if a.sub == "image":
+            import base64
+            import mimetypes
+            kind = (mimetypes.guess_type(a.file)[0] or "").split("/")[-1]
+            if kind not in ("png", "jpeg", "gif", "webp"):
+                raise ValueError("an image is a .png, .jpg, .gif or .webp file")
+            raw = open(a.file, "rb").read()
+            w, h = _xy(a.wh, "--wh") if a.wh else _image_size(raw) or (400, 300)
+            if not a.wh and w > 640:
+                w, h = 640, round(h * 640 / w)
+            x, y = _xy(a.at, "--at")
+            els = [{"type": "image", "x": x, "y": y, "w": w, "h": h, "id": a.id,
+                    "src": f"data:image/{kind};base64," + base64.b64encode(raw).decode()}]
+        elif a.sub == "connect":
+            els = [{"type": "arrow" if a.head != "none" else "line", "from": a.src, "to": a.dst, "text": a.label,
+                    "route": a.route, "head": a.head, "dash": a.dash, "color": a.color, "id": a.id}]
+            have = {e["id"] for e in boards.elements(store, claude)}
+            missing = [i for i in (a.src, a.dst) if i not in have]
+            if missing:
+                raise ValueError(f"no {', '.join(missing)} on {claude}'s whiteboard (`clodfarm board show` lists ids)")
+        elif a.sub == "draw":
+            raw = json.loads(open(a.file).read() if a.file not in (None, "-") else sys.stdin.read())
+            els = raw.get("elements") if isinstance(raw, dict) and "elements" in raw else raw
+            els = els if isinstance(els, list) else [els]
+        else:
+            el = {"type": a.kind if a.sub == "shape" else a.sub, "color": a.color, "id": a.id}
+            if a.sub in ("text", "note", "shape"):
+                el["text"] = (a.text or "").replace("\\n", "\n")
+                el["size"] = a.size
+                el["bold"] = getattr(a, "bold", None)
+            if a.sub == "path":
+                el["points"] = a.points
+            elif a.sub in ("line", "arrow"):
+                (el["x1"], el["y1"]), (el["x2"], el["y2"]) = _xy(a.at, "--at"), _xy(a.to, "--to")
+            else:
+                el["x"], el["y"] = _xy(a.at, "--at")
+            if a.sub in ("rect", "ellipse", "note", "shape"):
+                if a.wh or a.sub != "note":
+                    el["w"], el["h"] = _xy(a.wh or "", "--wh")
+                el["fill"] = a.fill
+            if a.sub in ("path", "line", "arrow", "rect", "ellipse", "shape"):
+                el["width"] = a.width
+                el["dash"] = getattr(a, "dash", None)
+            if a.sub == "path":
+                el["closed"], el["fill"] = a.closed or None, a.fill
+            els = [{k: v for k, v in el.items() if v is not None}]
+        r = boards.apply(store, claude, [{"op": "put", "el": e} for e in els], by)
+        _out(r, a.json, f"drew {len(r['items'])} on {claude}'s whiteboard: {' '.join(i['id'] for i in r['items'])}  {link}")
+        return 0
+    except (ValueError, OSError) as e:  # BoardError and bad JSON are ValueErrors
+        print(f"board: {e}", file=sys.stderr)
+        return 2
+
+
 def cmd_dashboard(cfg, a):
     from . import dashboards as dash
     from .gitops import git
@@ -713,8 +869,8 @@ def cmd_dashboard(cfg, a):
             _out(rows, a.json, "\n".join(
                 f"  {r['slug']:<24} {r['title'][:40]:<40} {(r['folder'] or '-')[:24]:<24} {_ago(r['updated']):>6} ago"
                 f"  by {r['owner'] or '-'}"
-                + (f"  live every {r['every'] // 60}m" + ("" if r["ok"] is not False else " (last refresh FAILED)")
-                   if r["live"] else "") for r in rows) or "(no dashboards yet: `clodfarm dashboard push <name> --file spec.json`)")
+                + (f"  live every {r['every'] // 60}m" if r["live"] else "")
+                + (" (last refresh FAILED)" if r["ok"] is False else "") for r in rows) or "(no dashboards yet: `clodfarm dashboard push <name> --file spec.json`)")
             return 0
         if a.sub == "show":
             d = dash.get(store, a.name)
@@ -726,13 +882,24 @@ def cmd_dashboard(cfg, a):
                  + f"\n\n{_farm_url()}/dashboards/{d['slug']}")
             return 0
         if a.sub == "push":
+            if a.run and a.agent:
+                raise ValueError("give --run or --agent, not both")
             if a.run:  # a live dashboard: run its code now (so errors show here), then the farm runs it on schedule
-                every = parse_every(a.every or "1h")
-                if every < dash.MIN_EVERY:
+                every = None if (a.every or "").strip().lower() == "manual" else parse_every(a.every or "1h")
+                if every is not None and every < dash.MIN_EVERY:
                     raise ValueError(f"refresh at most every {dash.MIN_EVERY // 60} minutes")
                 cwd = git(os.getcwd(), "rev-parse", "--show-toplevel", check=False).strip() or os.getcwd()
                 d = dash.push(store, a.name, dash.run_refresh(a.run, cwd, a.name), by=by, owner=owner, folder=a.folder)
                 d = dash.set_refresh(store, a.name, a.run, every, by=by)
+            elif a.agent:  # its Refresh button starts a sub-agent with these instructions
+                if a.every:
+                    raise ValueError("--every goes with --run (a recurring sub-agent is a `clodfarm schedule`)")
+                if a.file:
+                    dash.push(store, a.name, open(a.file).read() if a.file != "-" else sys.stdin.read(),
+                              by=by, owner=owner, folder=a.folder)
+                elif a.folder is not None:
+                    dash.move(store, a.name, a.folder, by=by)
+                d = dash.set_refresh(store, a.name, agent=a.agent, by=by)
             elif a.no_refresh and not a.file:
                 d = dash.set_refresh(store, a.name, None, by=by)
                 if a.folder is not None:
@@ -742,9 +909,11 @@ def cmd_dashboard(cfg, a):
                               by=by, owner=owner, folder=a.folder)
                 if a.no_refresh:
                     d = dash.set_refresh(store, a.name, None, by=by)
-            live = d.get("refresh")
-            _out(d, a.json, f"dashboard {d['slug']}: {len(d['widgets'])} widget(s)"
-                 + (f", refreshed every {live['every'] // 60}m by `{live['cmd']}` (run in the repo on main)" if live else "")
+            r = d.get("refresh") or {}
+            how = (f", refreshed every {r['every'] // 60}m and by its Refresh button with `{r['cmd']}` (run in the repo "
+                   "on main)" if r.get("every") else f", refreshed by its Refresh button with `{r['cmd']}`" if r.get("cmd")
+                   else ", its Refresh button starts a sub-agent with your instructions" if r.get("agent") else "")
+            _out(d, a.json, f"dashboard {d['slug']}: {len(d['widgets'])} widget(s){how}"
                  + f"\n{_farm_url()}/dashboards/{d['slug']}")
             return 0
         if a.sub == "metric":
@@ -763,8 +932,9 @@ def cmd_dashboard(cfg, a):
             return 0 if n else 1
         if a.sub == "refresh":
             d = dash.get(store, a.name)
-            if not d or not d.get("refresh"):
-                print(f"{a.name} is not a live dashboard (push it with --run)", file=sys.stderr)
+            if not d or not (d.get("refresh") or {}).get("cmd"):
+                print(f"{a.name} has no command to run (push it with --run); its page's Refresh button asks its "
+                      "Claude instead", file=sys.stderr)
                 return 1
             cwd = git(os.getcwd(), "rev-parse", "--show-toplevel", check=False).strip() or os.getcwd()
             r = dash.refresh(store, d, cwd)
@@ -1424,7 +1594,10 @@ def main(argv=None):
     dp.add_argument("--file", help="the JSON spec ('-' or nothing: stdin)")
     dp.add_argument("--run", help="make it live: a command, run in the repo, that prints the JSON spec (e.g. "
                     "'python3 dashboards/tests.py'); commit that code so the farm can run it")
-    dp.add_argument("--every", help="with --run: how often the farm runs it (default 1h, at least 5m)")
+    dp.add_argument("--every", help="with --run: how often the farm runs it (default 1h, at least 5m), or 'manual': "
+                    "only when someone presses the page's Refresh button")
+    dp.add_argument("--agent", help="instead of --run: instructions for the sub-agent the page's Refresh button "
+                    "starts to collect the data and push it (where the numbers come from, which commands or APIs)")
     dp.add_argument("--no-refresh", action="store_true", help="stop refreshing a live dashboard")
     dp.add_argument("--folder", help="put it in a folder (nest with '/', e.g. 'Growth/Leads'); left out, it stays put")
     dm = dbs.add_parser("metric", help="set one stat (adds the dashboard and the stat when new)")
@@ -1441,10 +1614,100 @@ def main(argv=None):
     drf = dbs.add_parser("rename-folder", help="rename a folder, with its subfolders (an existing name merges them)")
     drf.add_argument("old")
     drf.add_argument("new")
-    dbs.add_parser("refresh", help="run a live dashboard's command now").add_argument("name")
+    dbs.add_parser("refresh", help="run a dashboard's --run command now").add_argument("name")
     dbs.add_parser("remove", help="delete a dashboard and its history").add_argument("name")
     for q in dbs.choices.values():
         q.add_argument("--json", action="store_true")
+    from . import boards as boards_mod
+    from .diagram import SHAPES as SHAPE_NAMES
+    wb = add("board", cmd_board, "every Claude's whiteboard (the farm UI's WHITEBOARD): draw and write on it, read what's there")
+    wb.description = ("Every Claude has a whiteboard at /whiteboard/<claude>; everyone on the farm sees and draws on all of "
+                      "them. Coordinates are board pixels: x right, y down, (0,0) the top left of the first view (about "
+                      "1200x800 shows at once). Colors are #rrggbb. Without a subcommand: what's on yours.")
+    wbs = wb.add_subparsers(dest="sub")
+    wbs.add_parser("list", help="every Claude's whiteboard")
+    wbs.add_parser("show", help="every thing on the board, one per line (--json: the elements)")
+    def wb_add(name, help, text=False, at=True, to=False, wh=False, fill=False, width=False, points=False):
+        q = wbs.add_parser(name, help=help)
+        if text:
+            q.add_argument("text", help="the text ('\\n' or a real newline for more lines)")
+            q.add_argument("--size", type=float, help="font size in board pixels (text 24, note 20)")
+        if points:
+            q.add_argument("points", help="'x,y x,y x,y ...'")
+        if at:
+            q.add_argument("--at", required=True, help="X,Y: the top left (a line's start)")
+        if to:
+            q.add_argument("--to", required=True, help="X,Y: the end (an arrow's head)")
+        if wh:
+            q.add_argument("--wh", required=name != "note", help="WxH, e.g. 200x120" + (" (default 200x140)" if name == "note" else ""))
+        if fill:
+            q.add_argument("--fill", help="#rrggbb inside" + (" (default yellow)" if name == "note" else " (default none)"))
+        if width:
+            q.add_argument("--width", type=float, help="line width (default 3; a box's outline 2)")
+            q.add_argument("--dash", choices=["solid", "dashed", "dotted"])
+        q.add_argument("--color", help="#rrggbb (default ink #1f2a44)")
+        q.add_argument("--id", help="your own id for it (letters, digits, _ -): drawing the same id again replaces it")
+    wb_add("text", "write text", text=True)
+    wb_add("note", "a sticky note with text", text=True, wh=True, fill=True)
+    wb_add("rect", "a rectangle", wh=True, fill=True, width=True)
+    wb_add("ellipse", "an ellipse in that box", wh=True, fill=True, width=True)
+    wb_add("line", "a line", to=True, width=True)
+    wb_add("arrow", "an arrow", to=True, width=True)
+    wb_add("path", "a freehand stroke (or, --closed, a polygon) through points", at=False, points=True, width=True)
+    wbs.choices["path"].add_argument("--closed", action="store_true", help="join the last point to the first")
+    wbs.choices["path"].add_argument("--fill", help="#rrggbb or a name, inside a closed path")
+    sh = wbs.add_parser("shape", help="any box with a label: " + ", ".join(b for b in boards_mod.BOXES if b not in ("image", "note")))
+    sh.add_argument("kind", choices=[b for b in boards_mod.BOXES if b not in ("image", "note")])
+    sh.add_argument("text", nargs="?", default="", help="its label, wrapped and centered")
+    sh.add_argument("--at", required=True, help="X,Y: the top left")
+    sh.add_argument("--wh", required=True, help="WxH, e.g. 200x100")
+    sh.add_argument("--fill", help="#rrggbb or a name (blue, green, ...: a light tint of it)")
+    sh.add_argument("--width", type=float, help="outline width (default 2)")
+    sh.add_argument("--dash", choices=["solid", "dashed", "dotted"])
+    sh.add_argument("--size", type=float, help="the label's font size (default 18)")
+    sh.add_argument("--bold", action="store_true")
+    sh.add_argument("--color", help="the outline: #rrggbb or a name")
+    sh.add_argument("--id", help="your own id for it: arrows join it by this id, and drawing it again replaces it")
+    cn = wbs.add_parser("connect", help="an arrow that joins two things by their ids (it follows them when they move)")
+    cn.add_argument("src", metavar="FROM")
+    cn.add_argument("dst", metavar="TO")
+    cn.add_argument("--label")
+    cn.add_argument("--route", choices=["straight", "elbow", "curve"], default="elbow")
+    cn.add_argument("--head", choices=["end", "start", "both", "none"], default="end")
+    cn.add_argument("--dash", choices=["solid", "dashed", "dotted"])
+    cn.add_argument("--color")
+    cn.add_argument("--id")
+    dg = wbs.add_parser("diagram", help="lay out and draw a whole diagram: a Mermaid flowchart or JSON nodes and edges",
+                        description="Architecture, flows, org charts: say what joins what, the farm lays it out (in "
+                        "layers, with nested groups as frames) and draws it. Mermaid: `flowchart LR`, nodes a[box] "
+                        "b(rounded) c((circle)) d{diamond} e{{hexagon}} f[(database)] g[/parallelogram/], links --> --- "
+                        "-.-> ==> <--> with -->|label|, `subgraph id [Title] ... end`, `style id fill:#hex,stroke:#hex`, "
+                        "classDef/class. JSON: {direction: LR|TB, title, route: elbow|curve|straight, groups: [{id, text, "
+                        "parent}], nodes: [{id, text, shape, group, fill, color}], edges: [{from, to, text, dash, head}]}. "
+                        "Shapes: " + ", ".join(SHAPE_NAMES) + ". Drawing the same --name again replaces it, in place.")
+    dg.add_argument("--file", help="the diagram ('-' or nothing: stdin); .mmd or .json, told apart by its first character")
+    dg.add_argument("--name", help="its name (default 'diagram'): its elements' ids start with it")
+    dg.add_argument("--at", help="X,Y: its top left (default: where it was, or below what's on the board)")
+    dg.add_argument("--direction", choices=["LR", "TB"], help="left to right, or top to bottom (overrides the diagram's)")
+    im = wbs.add_parser("image", help="put a picture on the board (.png .jpg .gif .webp, at most about 220 KB)")
+    im.add_argument("file")
+    im.add_argument("--at", required=True, help="X,Y: the top left")
+    im.add_argument("--wh", help="WxH (default: its own size, at most 640 wide)")
+    im.add_argument("--id")
+    wd = wbs.add_parser("draw", help="many things at once from a JSON list of elements (diagrams)",
+                        description="A JSON list of elements, each {type, ...}: path {points:[[x,y]...]}, line|arrow "
+                        "{x1,y1,x2,y2}, rect|ellipse {x,y,w,h,fill}, text {x,y,text,size}, note {x,y,w,h,text,fill,size}; "
+                        "all take color, path/line/arrow/rect/ellipse take width, and any can have an id.")
+    wd.add_argument("--file", help="the JSON ('-' or nothing: stdin)")
+    wm = wbs.add_parser("move", help="move one thing")
+    wm.add_argument("id")
+    wm.add_argument("--by", required=True, help="DX,DY")
+    wbs.add_parser("remove", help="remove things by id").add_argument("ids", nargs="+")
+    wbs.add_parser("clear", help="wipe the whole board (only when its person asks)")
+    wb.add_argument("--board", help="whose board (a Claude's name; default: yours)")
+    for q in wbs.choices.values():
+        q.add_argument("--board", default=argparse.SUPPRESS, help="whose board (a Claude's name; default: yours)")
+        q.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     add("slack", cmd_slack, "give the farm work from Slack: status, or how to connect it")
     bt = add("bot", cmd_bot, "add a bot: Claude Code on another model (OpenRouter, Ollama, any Anthropic-compatible API)")
     bts = bt.add_subparsers(dest="sub")

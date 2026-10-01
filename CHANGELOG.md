@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.8.0 (2026-10-01)
+
+- **Whiteboards.** Every Claude has one (WHITEBOARD on the farm, or W; `/whiteboard/<claude>`): you draw and write
+  on it, your Claude draws on it with `clodfarm board`, and both see the other's changes within a second. Everyone on
+  the farm sees and draws on every board. A full editor: pen, arrows that join shapes and follow them, boxes, ovals,
+  decisions, databases, hexagons, clouds and more with labels inside, text, sticky notes, frames, images (paste or
+  drop), select, move, resize, copy, layers, undo, PNG. `clodfarm board diagram` lays out a whole Mermaid flowchart
+  (or JSON nodes and edges) with nested groups, so a Claude draws a complex architecture in one command. It looks
+  and works like Excalidraw: hand-drawn shapes and hachure fills (rough.js), Virgil's handwriting, an ink pen
+  (perfect-freehand), floating tools with Excalidraw's keys, a style panel with its palette and sloppiness, and a
+  welcome screen. See docs/whiteboard.md.
+- **A REFRESH button on every dashboard.** It runs the dashboard's code now (`--run CMD --every manual` makes code
+  that runs only then), or, for a dashboard without code, starts a sub-agent of the Claude that keeps it to collect
+  the data and push it again (`--agent "how to get the numbers"`, or `refresh` on `farm_dashboard_push`, tells it
+  how). The page shows it working and the new numbers the moment they land; a refresh that brings no data says why.
+  The manager and the person of the Claude that keeps it start sub-agents; anyone on the farm runs a dashboard's code.
+
 ## 1.7.1 (2026-09-30)
 
 - **MANAGE → COMPUTERS (MCP).** The farm's manager sees the computers connected to the farm over MCP (Claude Code on

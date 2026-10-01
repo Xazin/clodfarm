@@ -46,7 +46,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import __version__, boot, bots, browser, connectors, dashboards, policy, sso
+from . import __version__, boards, boot, bots, browser, connectors, dashboards, gitops, policy, sso
 from . import mcp
 from .agents import AgentManager, room_note
 from .slack import SlackBridge
@@ -466,6 +466,28 @@ class FarmUI:
         st["per_claude"] = browser.PER_CLAUDE
         st["me"] = who.owner
         return st
+
+    def can_refresh(self, who: "Who", d: dict) -> bool:
+        """Who may press a dashboard's Refresh button: any of the farm's people runs its code; starting a sub-agent
+        (which spends its Claude's usage) is for that Claude's person and the manager."""
+        if (d.get("refresh") or {}).get("cmd"):
+            return bool(who.manager or who.owner)
+        return who.owns(d.get("owner"))
+
+    def board_names(self) -> set[str]:
+        """The Claudes that have a whiteboard: every Claude (and bot) on the farm."""
+        return {a["id"] for a in self.manager.all()}
+
+    def boards_view(self, who: "Who") -> list[dict]:
+        """Every Claude's whiteboard, the viewer's own first."""
+        metas = {m["SK"]: m for m in boards.all_(self.store)}
+        out = []
+        for a in self.manager.all():
+            m, rec = metas.get(a["id"]) or {}, self.store.claude(a["id"])
+            out.append({"claude": a["id"], "name": rec.get("name") or a.get("name") or a["id"],
+                        "mine": who.owner == a["id"], "rev": int(m.get("rev", 0)), "count": int(m.get("count", 0)),
+                        "updated": m.get("updated"), "updated_by": m.get("updated_by")})
+        return sorted(out, key=lambda b: (not b["mine"], -(b["updated"] or 0), b["claude"]))
 
     def first_profile(self, who: "Who") -> str:
         """The profile a request means when it names none: the viewer's own Claude's first (the manager: any)."""
@@ -963,6 +985,8 @@ def make_handler(ui: FarmUI):
                     return self._page("browser.html", self._browser_csp())
                 if path in ("/tasks", "/tasks/"):
                     return self._page("tasks.html")
+                if path in ("/whiteboard", "/whiteboard/") or re.fullmatch(r"/whiteboard/[a-z0-9@._-]{1,64}", path):
+                    return self._page("whiteboard.html")  # every Claude's board: one page, routed by whiteboard.js
                 if path.startswith("/browser/novnc/"):  # noVNC, the VNC client the browser page draws with
                     return self._static(path[len("/browser/novnc/"):], browser.novnc_dir())
                 if path == "/api/browser/screen":
@@ -987,6 +1011,15 @@ def make_handler(ui: FarmUI):
                                   len(body))
                     self.wfile.write(body)
                     return
+                if path == "/api/boards":  # every Claude's whiteboard: anyone who watches the farm sees them all
+                    return self._json(ui.boards_view(who))
+                m = re.fullmatch(r"/api/boards/([a-z0-9@._-]{1,64})", path)
+                if m:
+                    if m.group(1) not in ui.board_names():
+                        return self._err(404, "no such Claude on this farm")
+                    q = {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
+                    since = int(q["since"]) if str(q.get("since") or "").isdigit() else 0
+                    return self._json(boards.changes(ui.store, m.group(1), since))
                 if path == "/api/tasks":
                     body, tag = ui.tasks_for(who, {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()})
                     if self.headers.get("If-None-Match") == tag:
@@ -1048,7 +1081,7 @@ def make_handler(ui: FarmUI):
                         return self._err(404, "no such dashboard")
                     q = {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
                     days = max(1, min(365, int(q.get("days") or 30))) if str(q.get("days") or "30").isdigit() else 30
-                    return self._json(dashboards.view(ui.store, d, days))
+                    return self._json({**dashboards.view(ui.store, d, days), "can_refresh": ui.can_refresh(who, d)})
                 if path == "/api/sessions":  # every Claude session on the farm, newest first
                     q = {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
                     claude = q.get("claude") if who.manager else who.owner
@@ -1244,6 +1277,9 @@ def make_handler(ui: FarmUI):
                     return self._hatch_invited(data)
                 if not self._who().can_view:
                     return self._err(401, "this farm is private: log in first")
+                m = re.fullmatch(r"/api/boards/([a-z0-9@._-]{1,64})", path)
+                if m:  # draw on a whiteboard: anyone who watches the farm draws on every board (no state to rebuild)
+                    return self._board_post(m.group(1), data, self._who())
                 return self._post(path, data)
             except (BrokenPipeError, ConnectionResetError):
                 pass
@@ -1321,6 +1357,17 @@ def make_handler(ui: FarmUI):
                 return self._json(ui.slack.connect(str(data.get("bot_token", ""))[:300],
                                                    str(data.get("app_token", ""))[:300], allow, ui_url))
             return self._rest(path, data, who)
+
+        def _board_post(self, claude: str, data: dict, who: Who):
+            if claude not in ui.board_names():
+                return self._err(404, "no such Claude on this farm")
+            by = f"person:{who.owner}" if who.owner else "visitor"
+            try:
+                if data.get("clear"):
+                    return self._json(boards.clear(ui.store, claude, by))
+                return self._json(boards.apply(ui.store, claude, data.get("ops"), by))
+            except boards.BoardError as e:
+                return self._err(400, str(e))
 
         def _browser_post(self, path: str, data: dict, who: Who):
             """The farm's browser: a person manages their own Claude's profiles; the manager, every profile."""
@@ -1542,6 +1589,25 @@ def make_handler(ui: FarmUI):
                 if not ok:
                     raise ValueError("it already finished" if action == "cancel" else "it is still at work")
                 return self._json(ui.tasks_view(who))
+            m = re.fullmatch(r"/api/dashboards/([a-z0-9-]{1,48})/refresh", path)
+            if m:  # a dashboard's Refresh button
+                d = dashboards.get(store, m.group(1))
+                if not d:
+                    return self._err(404, "no such dashboard")
+                if not ui.can_refresh(who, d):
+                    return self._err(403, "only the person of the Claude that keeps it (or the farm manager) starts "
+                                          "its sub-agent")
+                if not (d.get("refresh") or {}).get("cmd") and store.count("queued") >= ui.cfg.max_queue:
+                    raise ValueError(f"{ui.cfg.max_queue} sub-agents are already waiting; try again later")
+                to = d.get("owner") if d.get("owner") in ui.board_names() else None
+                d = dashboards.request_refresh(
+                    store, d["slug"], by=f"person:{who.owner}" if who.owner else "ui", to=to,
+                    url=f"{self._public_base()}/dashboards/{d['slug']}", max_depth=ui.cfg.max_depth)
+                if (d.get("refresh") or {}).get("cmd"):  # its code: run it now, on this box, off this request
+                    cwd = ui.cfg.repo_dir if gitops.is_repo(ui.cfg.repo_dir) else ui.cfg.workspace
+                    threading.Thread(target=dashboards.refresh, args=(store, d, cwd), name=f"dash-{d['slug']}",
+                                     daemon=True).start()
+                return self._json({**dashboards.view(store, d), "can_refresh": True})
             m = re.fullmatch(r"/api/dashboards/([a-z0-9-]{1,48})/move", path)
             if m or path == "/api/dashboards/rename-folder":  # organizing the dashboards list
                 if m:

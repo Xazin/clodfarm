@@ -306,6 +306,8 @@ const ICONS = {
     { o: "#1f2a44", w: "#fff8e8", k: "#d97757" }],
   plug: [["..mn..mn..", "..mn..mn..", "oooooooooo", "ohhhhhhhbo", "ohbbbbbbso", "obbbbbbbso", ".obbbbbso.", "..osssso..", "...occo...", "....cc...."],
     { o: "#2f251b", m: "#b7bfcc", n: "#6b7383", h: "#f2a07a", b: "#d97757", s: "#b45a3c", c: "#3c4a6b" }],
+  board: [["oooooooooo", "owwwwwwwwo", "owrrwwwwwo", "owwwwbbbwo", "owwgwwwwwo", "owwwgwwwwo", "owwwwwwwwo", "oooooooooo", "...o..o...", "..o....o.."],
+    { o: "#5a3d1e", w: "#fffdf7", r: "#d97757", b: "#1c9fd6", g: "#3cc36b" }],
   quill: [["........oo", ".......owo", "......owwo", ".....owwo.", "....owwo..", "...owwo...", "..oowo....", "..ooo.....", ".ooo......", "oo........"],
     { o: "#3a2a1a", w: "#f6ecd0" }],
 };
@@ -1681,10 +1683,10 @@ const UI = {
     this.titleNote = text;
     const p = $("#title-note"); if (p) p.textContent = text;
   },
-  /** Back to the page that sent you to log in (?next=dashboards/<name>, ?next=browser, ?next=tasks); only farm-local paths. */
+  /** Back to the page that sent you to log in (?next=dashboards/<name>, ?next=browser, ?next=tasks, ?next=whiteboard); only farm-local paths. */
   goNext() {
     const next = new URLSearchParams(location.search).get("next") || "";
-    if (!/^(dashboards(\/[a-z0-9-]{1,48})?|browser|tasks)$/.test(next)) return false;
+    if (!/^(dashboards(\/[a-z0-9-]{1,48})?|browser|tasks|whiteboard)$/.test(next)) return false;
     location.replace(next);
     return true;
   },
@@ -1985,7 +1987,7 @@ const UI = {
     }
     addEventListener("keydown", (e) => {
       if ($("#hud").hidden || $$("dialog[open]").length || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
-      const k = { c: "hatch", h: "hatch", n: "hatch", s: "connectors", t: "talk", d: "dashboards", b: "browser", j: "tasks", r: "roster", g: "manager",
+      const k = { c: "hatch", h: "hatch", n: "hatch", s: "connectors", t: "talk", d: "dashboards", b: "browser", j: "tasks", w: "whiteboard", r: "roster", g: "manager",
         a: "approvals", m: "menu", p: "planner", "?": "help", "0": "fit", f: "fit", "+": "zoomin", "=": "zoomin", "-": "zoomout" }[e.key.toLowerCase()];
       if (k) { e.preventDefault(); this.act(k); }
     });
@@ -2011,6 +2013,7 @@ const UI = {
     if (a === "dashboards" && person) location.href = "dashboards";
     if (a === "browser" && R.owner) location.href = "browser";
     if (a === "tasks") location.href = "tasks";
+    if (a === "whiteboard") location.href = "whiteboard";
   },
 
   // ------------------------------------------------------ talk to your Claude
@@ -3629,6 +3632,7 @@ const UI = {
         st?.planner ? link("THE PLANNER", "planner", "P") : null,
         person ? link("TALK TO YOUR CLAUDE", "talk", "T") : null,
         link("TASKS AND SCHEDULES", null, "J", "tasks"),
+        link("WHITEBOARDS", null, "W", "whiteboard"),
         person ? link("DASHBOARDS", null, "D", "dashboards") : null,
         R.owner ? link("YOUR CLAUDE'S BROWSER", null, "B", "browser") : null,
         person ? link("CONNECTORS: SLACK, STRIPE, GOOGLE ADS", "connectors", "S") : null,

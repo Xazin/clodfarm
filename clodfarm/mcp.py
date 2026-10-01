@@ -301,8 +301,10 @@ TOOLS = [
      "chart {label,unit,from:[stat keys]} (plots the stats' recorded history) or {label,unit,series:[{name,points:"
      "[[iso time, value]]}]}, bars {label,unit,items:[{label,value}]}, table {label,columns,rows}, progress "
      "{label,value,max}, text {label,text}. Every push records each stat's value, so the page shows how it moved. "
-     "folder (optional, nest with '/', e.g. 'Growth/Leads') files it on the list page; left out, it stays where it is.",
-     _schema({"dashboard": S, "spec": {"type": "object"}, "folder": S}, ["dashboard", "spec"])),
+     "folder (optional, nest with '/', e.g. 'Growth/Leads') files it on the list page; left out, it stays where it is. "
+     "refresh (optional): instructions for the sub-agent the page's Refresh button starts to collect the data again "
+     "and push it (where the numbers come from).",
+     _schema({"dashboard": S, "spec": {"type": "object"}, "folder": S, "refresh": S}, ["dashboard", "spec"])),
 ]
 READ_ONLY = {t[0] for t in TOOLS if t[1] == "farm:read"}
 
@@ -403,6 +405,8 @@ def run_tool(ui, grant: dict, name: str, args: dict):
                 folder = args.get("folder")
                 d = dashboards.push(store, s("dashboard", 48), args.get("spec"), by=me, owner=me,
                                     folder=None if folder is None else str(folder)[:200])
+                if s("refresh", 4000) and not (d.get("refresh") or {}).get("cmd"):  # a command (from the CLI) stays
+                    d = dashboards.set_refresh(store, d["slug"], agent=s("refresh", 4000), by=me)
                 return {"dashboard": d["slug"], "widgets": len(d["widgets"]), "url": f"{pub}/dashboards/{d['slug']}"}
             if s("dashboard", 48):
                 d = dashboards.get(store, s("dashboard", 48))

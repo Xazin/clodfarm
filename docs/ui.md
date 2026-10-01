@@ -37,6 +37,7 @@ The toolbar, bottom right (hover a button, or tab to it, for its name and key):
 | Slack logo | `S` | Give the farm work from Slack ([slack.md](slack.md)). Its dot is green when connected. |
 | Chart | `D` | The dashboards ([dashboards.md](dashboards.md)). |
 | Clipboard | `J` | The TASKS page (below): every sub-agent and schedule, and what you can do to them. |
+| Whiteboard | `W` | Every Claude's whiteboard: you draw and write, your Claude draws diagrams and art, everyone sees every board ([whiteboard.md](whiteboard.md)). |
 | Globe | `B` | The farm's browser: log in to sites there and the Claudes use those logins ([browser.md](browser.md)). |
 | **+ NEW CLAUDE** | `C` | Add a Claude login, or a [bot](bots.md). |
 
