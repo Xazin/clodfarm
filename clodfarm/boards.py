@@ -88,7 +88,7 @@ def _num(v, what: str, lo: float = -MAX_COORD, hi: float = MAX_COORD) -> float:
         raise BoardError(f"{what}: {v!r} is not a number") from None
     if not math.isfinite(f) or abs(f) > MAX_COORD:
         raise BoardError(f"{what}: {v!r} is out of range")
-    f = round(max(lo, min(hi, f)), 1)
+    f = float(round(max(lo, min(hi, f)), 1))  # a bound can be an int (int.is_integer is 3.12+)
     return int(f) if f.is_integer() else f
 
 

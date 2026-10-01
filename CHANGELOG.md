@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.1 (2026-10-01)
+
+- Whiteboards work on Python 3.10 and 3.11 (1.8.0 needed 3.12; its image was never published).
+
 ## 1.8.0 (2026-10-01)
 
 - **Whiteboards.** Every Claude has one (WHITEBOARD on the farm, or W; `/whiteboard/<claude>`): you draw and write
