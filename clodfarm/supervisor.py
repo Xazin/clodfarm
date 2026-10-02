@@ -161,6 +161,7 @@ class Farm:
                     print(f"mail: {tid} started for an unread --wake message", flush=True)
                 if not os.environ.get("FARM_HATCHED"):  # the farm's own daemon drives the planner (one per farm)
                     planner.tick(self.store, self.cfg, self.cfg.farm_id, self.cfg.name)
+                self.ensure_relay()  # a bot on the relay: brought back if it died
                 if now() - last_status > 600:
                     self.print_status()
                     last_status = now()
@@ -309,7 +310,17 @@ class Farm:
         if self.cfg.bot:  # no Claude login: its provider answered when it was added (bots.check)
             self.seat = self.cfg.seat or f"bot-{self.cfg.name}"
             print(f"{self.billing()}, seat {self.seat}, claude {self.cfg.name} on farm {self.cfg.farm}", flush=True)
-            return
+            while self.cfg.bot_dialect and not self.stop.is_set():
+                try:
+                    return self.ensure_relay()
+                except (OSError, RuntimeError, ValueError) as e:
+                    print(f"relay: {e}; trying again in 10s", flush=True)
+                    self.stop.wait(10)
+            if not self.stop.is_set():
+                return
+            if self.handoff:
+                self.hand_over()
+            raise SystemExit(0)
         shown = 0.0
         while not self.stop.is_set():
             st = auth_status(self.cfg.claude_bin)
@@ -326,6 +337,23 @@ class Farm:
         if self.handoff:  # SIGHUP while it waited (for its login, for the store): exec the new release, as always
             self.hand_over()
         raise SystemExit(0)
+
+    def ensure_relay(self):
+        """A bot on the relay (relay.py): its relay is up, and every Claude Code this run starts talks to it."""
+        if not self.cfg.bot_dialect:
+            return
+        from . import relay
+        url, token = relay.ensure(self.cfg.workspace, self.cfg.name, dict(os.environ))
+        if os.environ.get("ANTHROPIC_BASE_URL") != url:
+            print(f"relay: {self.cfg.bot} via {self.cfg.bot_via} at {url}", flush=True)
+        os.environ["ANTHROPIC_BASE_URL"], os.environ["ANTHROPIC_AUTH_TOKEN"] = url, token
+
+    def run_cost(self, res) -> float:
+        """What a run cost at list price: Claude Code's own figure, or for a bot on the relay its model's price."""
+        if not self.cfg.bot_dialect:
+            return res.cost_usd
+        from . import prices
+        return round(prices.cost(self.cfg.bot_provider, self.cfg.bot, res.usage, self.cfg.bot_price), 6)
 
     def name_claude(self, st: dict):
         """The farm's own Claude is named after the account logged in to it (matan), not after the farm (jestr).
@@ -812,12 +840,13 @@ class Farm:
             return  # handing over: the run goes on and the next release adopts it; stopping: shutdown() hands it back
 
         after = res.snapshots[-1] if res.snapshots else None
-        store.add_spend(res.cost_usd, self.seat)
+        cost = self.run_cost(res)
+        store.add_spend(cost, self.seat)
         store.add_tokens(store.token_counts(res.usage), cfg.name)
         store.put_tools(cfg.name, res.init)  # what this Claude can use, as its last sub-agent saw it
         store.add_run(tid, {
             "worker": holder, "started": started, "duration_s": round(res.duration_s, 1), "ok": res.ok,
-            "cost_usd_list_price": res.cost_usd, "turns": res.num_turns, "terminal_reason": res.terminal_reason,
+            "cost_usd_list_price": cost, "turns": res.num_turns, "terminal_reason": res.terminal_reason,
             "output_tokens": (res.usage or {}).get("output_tokens"), "tokens": store.token_counts(res.usage),
             "util_before": before, "util_after": after.to_dict() if after else None,
         })

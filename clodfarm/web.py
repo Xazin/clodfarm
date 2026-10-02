@@ -46,7 +46,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import __version__, boards, boot, bots, browser, connectors, dashboards, gitops, policy, sso
+from . import __version__, boards, boot, bots, browser, connectors, dashboards, gitops, planner, policy, sso
 from . import mcp
 from .agents import AgentManager, room_note
 from .slack import SlackBridge
@@ -357,7 +357,7 @@ class FarmUI:
             v.update(hat=rec.get("hat") or v["hat"], colors=rec.get("colors"), accessory=rec.get("accessory"),
                      name=rec.get("name") or v["name"], approve_missions=bool(rec.get("approve_missions")),
                      tools_off=policy.clean(rec.get("tools"))["deny"], owned=bool(rec.get("owned")),
-                     planner_host_ok=bool(rec.get("planner_host_ok")) or v["primary"])
+                     planner_host_ok=planner.host_ok(rec) or v["primary"])
         primary = self.cfg.name
         subs = []
         for s in ("running", "waiting", "queued"):
@@ -1487,7 +1487,8 @@ def make_handler(ui: FarmUI):
             owned = not who.owner  # the manager hatching for someone else still gets it on this device
             store.put_claude(a["id"], name=a["name"], hat=skin.get("hat") or a.get("hat"), colors=skin.get("colors"),
                              accessory=skin.get("accessory"), approve_missions=approve, tools=tools, owned=owned,
-                             hatched_by="manager" if who.manager else "public")
+                             hatched_by="manager" if who.manager else "public",
+                             bot=a["bot"]["model"] if a.get("bot") else None)
             policy.save(a["config_dir"], tools, claude=a["id"])
             store.event("agent.added", f"{a['id']} hatched from the farm UI ({what})"
                         + ("; its person approves every mission" if approve else "")

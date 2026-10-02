@@ -66,6 +66,9 @@ class Config:
     bot: str  # FARM_BOT: this Claude is a bot, Claude Code on this model through another provider (see bots.py)
     bot_via: str  # the bot's provider, as people call it (OpenRouter)
     bot_takes: str  # a bot takes only the sub-agents sent to it ("sent"), or any ("any")
+    bot_provider: str  # FARM_BOT_PROVIDER: the bot's provider (openai, xai, gemini...), for its list prices
+    bot_dialect: str  # FARM_BOT_DIALECT: "chat" or "responses" for a bot on the relay (relay.py), else ""
+    bot_price: dict  # the bot's own list price, from FARM_BOT_OPTS ({"in", "cached", "out"} per million tokens)
     policy: Policy
 
     @property
@@ -109,6 +112,15 @@ def _claude_name(farm: str, workspace: str) -> str:
         except (OSError, ValueError):
             pass
     return farm
+
+
+def _bot_price() -> dict:
+    import json
+    try:
+        p = json.loads(os.environ.get("FARM_BOT_OPTS") or "{}").get("price")
+    except (ValueError, AttributeError):
+        return {}
+    return p if isinstance(p, dict) else {}
 
 
 def load() -> Config:
@@ -161,6 +173,9 @@ def load() -> Config:
         bot=_env("FARM_BOT", ""),
         bot_via=_env("FARM_BOT_VIA", ""),
         bot_takes="any" if _env("FARM_BOT_TAKES", "sent") == "any" else "sent",
+        bot_provider=_env("FARM_BOT_PROVIDER", ""),
+        bot_dialect=_env("FARM_BOT_DIALECT", "") if _env("FARM_BOT_DIALECT", "") in ("chat", "responses") else "",
+        bot_price=_bot_price(),
         policy=Policy(
             max_workers=int(_env("FARM_MAX_WORKERS", "3")),
             min_workers=int(_env("FARM_MIN_WORKERS", "1")),

@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 
-from clodfarm import planner, policy
+from clodfarm import planner, policy, prompts
 from clodfarm.config import load
 
 
@@ -190,6 +190,26 @@ def test_the_planner_only_runs_where_it_is_allowed(env, store):
     assert planner.tick(store, cfg, cfg.farm_id, cfg.name) is None and store.planner()["state"] == "host-refused"
     store.put_claude("gil", planner_host_ok=True)
     assert planner.tick(store, cfg, cfg.farm_id, cfg.name)["to"] == "gil"
+
+
+def test_the_planner_runs_on_a_bot_the_manager_added_and_codes_on_the_claudes(env, store):
+    cfg = load()
+    store.set_planner(on=True, goal="Make $500 into more", host="gpt")
+    store.put_claude("gpt", bot="gpt-5", hatched_by="public")
+    assert planner.tick(store, cfg, cfg.farm_id, cfg.name) is None and store.planner()["state"] == "host-refused", \
+        "a bot someone else hatched spends their key: only with their yes"
+    store.put_claude("gpt", hatched_by="manager")
+    store.bot = {"bot": "gpt-5", "bot_via": "OpenAI", "bot_takes": "sent"}  # as the bot's own `clodfarm run` beats
+    store.heartbeat("gpt@box", "w0", "idle", seat="bot-gpt")
+    store.bot = {}
+    store.add_spend(1.5, "bot-gpt")
+    t = planner.tick(store, cfg, cfg.farm_id, cfg.name)
+    assert t and t["to"] == "gpt" and t["kind"] == "plan"
+    assert "You run on gpt-5, not on Claude" in t["prompt"] and "--on <claude>" in t["prompt"]
+    assert "gpt: BOT on gpt-5 via OpenAI, $1.50 spent today" in t["prompt"], "the planner sees what each bot costs"
+    store.set_planner(host=cfg.name)
+    store.set_planner(task=None)
+    assert "not on Claude" not in prompts.planner_prompt("g", 1, "15m", "n", "", "s", "")
 
 
 def test_planner_cli(env, store):

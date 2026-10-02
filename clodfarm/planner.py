@@ -2,7 +2,8 @@
 
 The farm manager sets the goal and switches it on (the manager panel, or `clodfarm planner on`). The farm's own daemon
 (one across boxes, by a lease) starts a planner cycle whenever the last one is over and its wait is up: a sub-agent
-of kind ``plan`` on the planner's Claude (the farm's own Claude, or one whose person allowed it). The cycle reads its
+of kind ``plan`` on the planner's Claude (the farm's own Claude, one whose person allowed it, or a bot the manager
+added: the planner can think on GPT, Grok or Gemini and still have the Claudes write the code). The cycle reads its
 notebook, looks at the farm (every Claude's budget and tools), delegates work as its own sub-agents (on any Claude:
 their persons' approvals apply), builds tools the goal needs, and ends; it is resumed with its sub-agents' results like
 any parent, and the next cycle starts after ``every_s`` or once they are all in.
@@ -27,14 +28,24 @@ def _every(s: float) -> str:
     return f"{s // 3600}h" if s % 3600 == 0 and s >= 3600 else f"{s // 60}m" if s >= 60 else f"{s}s"
 
 
+def host_ok(rec: dict) -> bool:
+    """The planner may run on a Claude whose person allowed it, or on a bot the farm manager added: a bot spends its
+    provider's key, which the manager gave the farm, not a person's subscription."""
+    return bool(rec.get("planner_host_ok")) or bool(rec.get("bot") and rec.get("hatched_by") == "manager")
+
+
 def snapshot(store, cfg) -> str:
     from .cli import _seats
     lines = []
     tools = store.tools()
     seats = {r["seat"]: r for r in _seats(cfg, store)}
     boxes: dict[str, str] = {}
+    bots: dict[str, dict] = {}
     for w in store.workers():
-        boxes.setdefault(w["SK"].split("/")[0].split("@")[0], w.get("seat") or "")
+        name = w["SK"].split("/")[0].split("@")[0]
+        boxes.setdefault(name, w.get("seat") or "")
+        if w.get("bot"):
+            bots[name] = w
     for name in sorted(set(boxes) | set(tools)):
         r = seats.get(boxes.get(name)) or {}
         snap = r.get("snapshot")
@@ -43,6 +54,11 @@ def snapshot(store, cfg) -> str:
             use = f"5h {snap.five_hour.utilization:.0%} used"
         if snap and snap.seven_day:
             use += f", 7d {snap.seven_day.utilization:.0%} used"
+        if name in bots:  # no subscription windows: what it costs is what counts
+            b = bots[name]
+            use = (f"BOT on {b['bot']}" + (f" via {b['bot_via']}" if b.get("bot_via") else "")
+                   + f", ${store.spent_today(boxes.get(name) or f'bot-{name}'):.2f} spent today at list price"
+                   + ("" if b.get("bot_takes") == "any" else "; takes only work sent to it with --on"))
         rec = store.claude(name)
         t = tools.get(name) or {}
         mcps = ", ".join(sorted(m.get("name", "?") for m in t.get("mcp_servers") or [] if isinstance(m, dict)))[:300]
@@ -67,7 +83,7 @@ def tick(store, cfg, farm_id: str, primary: str):
         return None  # another box drives it
     host = pl.get("host") or primary
     rec = store.claude(host)
-    if host != primary and not rec.get("planner_host_ok"):
+    if host != primary and not host_ok(rec):
         if pl.get("state") != "host-refused":
             store.set_planner(state="host-refused")
             store.event("planner.blocked", f"the planner can't run on {host}: its person hasn't allowed it (SETTINGS)")
@@ -98,7 +114,7 @@ def tick(store, cfg, farm_id: str, primary: str):
     except OSError:
         notes = ""
     prompt = prompts.planner_prompt(pl.get("goal") or "", cycle, _every(every), path, notes, snapshot(store, cfg),
-                                    (t or {}).get("result", ""))
+                                    (t or {}).get("result", ""), bot=rec.get("bot") or "")
     task = store.add_task(f"Planner cycle {cycle}: {(pl.get('goal') or '')[:60]}", prompt, priority=6, kind="plan",
                           to=host, owner=host, created_by="planner", max_depth=cfg.max_depth,
                           max_attempts=cfg.max_attempts)

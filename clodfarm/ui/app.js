@@ -25,12 +25,22 @@ function mulberry32(a) {
 }
 // the providers a bot can use (clodfarm/bots.py has the same list; the farm checks what's sent)
 const BOT_PROVIDERS = {
+  openai: { label: "OpenAI", url: "https://api.openai.com/v1", key: true, example: "gpt-6.1-sol", relay: true,
+    hint: "GPT models, through the bot's own relay on OpenAI's Responses API (Claude Code speaks Anthropic's API, the relay translates); their reasoning summaries show as thinking. Make a key at platform.openai.com/api-keys." },
+  xai: { label: "xAI", url: "https://api.x.ai/v1", key: true, example: "grok-4.7", relay: true,
+    hint: "Grok models, through the bot's own relay. Make a key at console.x.ai." },
+  gemini: { label: "Gemini", url: "https://generativelanguage.googleapis.com/v1beta/openai", key: true, example: "gemini-3.1-pro-preview", relay: true,
+    hint: "Gemini models through Google's OpenAI-compatible endpoint and the bot's own relay; its thoughts show as thinking. Make a key at aistudio.google.com/apikey." },
+  groq: { label: "Groq", url: "https://api.groq.com/openai/v1", key: true, example: "openai/gpt-oss-120b", relay: true,
+    hint: "Fast open models on Groq, through the bot's own relay. Make a key at console.groq.com/keys." },
   openrouter: { label: "OpenRouter", url: "https://openrouter.ai/api", key: true, example: "qwen/qwen3-coder:free",
     hint: "Free models end in :free (openrouter.ai/models, filter by price). Make a key at openrouter.ai/keys. Free tiers allow a few requests a minute: the bot pauses when it hits that." },
   ollama: { label: "Ollama", url: "http://host.docker.internal:11434", key: false, example: "qwen3-coder",
     hint: "Ollama on the machine running the farm's container: pull a model that can use tools first (ollama pull qwen3-coder)." },
   custom: { label: "Anthropic-compatible", url: "", key: false, example: "",
     hint: "Any endpoint that speaks Anthropic's Messages API, like a LiteLLM gateway. The address is its base URL, without /v1." },
+  "openai-compatible": { label: "OpenAI-compatible", url: "", key: false, example: "", relay: true,
+    hint: "Any endpoint that speaks OpenAI's Chat Completions API (vLLM, LM Studio, a gateway), through the bot's own relay. The address is its base URL, with /v1." },
 };
 function hashStr(s) { let x = 2166136261; for (const c of String(s)) { x ^= c.charCodeAt(0); x = Math.imul(x, 16777619); } return x >>> 0; }
 /** replaceChildren that flattens arrays and drops null/false (plain replaceChildren would print "null"). */
@@ -2976,28 +2986,33 @@ const UI = {
       btn.disabled = false; btn.textContent = D.kind === "bot" ? "▶ CHECK & ADD BOT" : "▶ HATCH IT";
     }
   },
-  renderBotForm(pick) { // a bot: Claude Code on another model, through a provider that speaks Anthropic's API
+  renderBotForm(pick) { // a bot: Claude Code on another model, through a provider that speaks Anthropic's API (or OpenAI's, via its relay)
     const P = BOT_PROVIDERS, D = this.draft, B = D.bot || {};
     const url = h("input", { name: "url", autocomplete: "off", spellcheck: "false", required: true }),
       model = h("input", { name: "model", autocomplete: "off", spellcheck: "false", required: true, maxlength: 128, value: B.model || "" }),
       key = h("input", { name: "key", type: "password", autocomplete: "off", spellcheck: "false", maxlength: 500, value: B.key || "" }),
-      keyNote = h("span", { class: "muted" }), hint = h("p", { class: "muted small" });
+      keyNote = h("span", { class: "muted" }), hint = h("p", { class: "muted small" }),
+      priceIn = h("input", { name: "price_in", type: "number", min: 0, step: "any", inputmode: "decimal", placeholder: "known prices", value: B.price_in ?? "" }),
+      priceOut = h("input", { name: "price_out", type: "number", min: 0, step: "any", inputmode: "decimal", placeholder: "known prices", value: B.price_out ?? "" }),
+      prices = h("div", { class: "row2" }, h("label", {}, "$ / M IN ", h("span", { class: "muted", text: "(optional)" }), priceIn),
+        h("label", {}, "$ / M OUT ", h("span", { class: "muted", text: "(optional)" }), priceOut));
     const provider = h("select", { name: "provider" }, Object.entries(P).map(([k, p]) => h("option", { value: k, text: p.label, selected: B.provider === k })));
     const sync = (keepUrl) => {
       const p = P[provider.value];
       url.value = keepUrl && B.url ? B.url : p.url; url.placeholder = p.url || "https://your-gateway.example.com";
       model.placeholder = p.example ? `e.g. ${p.example}` : "the model, as the provider names it";
       key.required = p.key; keyNote.textContent = p.key ? "" : " (optional)"; hint.textContent = p.hint;
+      prices.hidden = !p.relay; // its spend is counted at its list price: known ones, or these
     };
     provider.addEventListener("change", () => sync(false));
     const form = h("form", {}, this.hatchStep(1, "THE BOT"), pick,
-      h("p", { class: "muted", text: "A bot is Claude Code on another model: a free one on OpenRouter, or your own through Ollama. It uses no Claude account's usage, but it's weaker than Claude, so it takes only the sub-agents sent to it." }),
+      h("p", { class: "muted", text: "A bot is Claude Code on another model: GPT, Grok, Gemini, a free one on OpenRouter, or your own through Ollama. It uses no Claude account's usage, and it takes only the sub-agents sent to it (or plans for the farm, from the planner's settings)." }),
       h("label", {}, "NAME ", h("span", { class: "muted", text: "(optional)" }), h("input", { name: "name", maxlength: 24, placeholder: "e.g. qwen or night-bot", autocomplete: "off", value: D.name })),
       h("label", {}, "PROVIDER", provider),
       h("label", {}, "ADDRESS", url),
       h("label", {}, "MODEL", model),
       h("label", {}, "API KEY", keyNote, key),
-      hint,
+      hint, prices,
       h("label", { class: "check" }, h("input", { name: "any", type: "checkbox", checked: B.takes === "any" }), "ALSO TAKE ANY SUB-AGENT ", h("span", { class: "muted", text: "(not only the ones sent to it)" })),
       h("p", { class: "form-error", role: "alert" }),
       h("div", { class: "dlg-actions" }, h("button", { class: "btn primary", type: "submit" }, "NEXT: ITS LOOK ▶")));
@@ -3007,6 +3022,7 @@ const UI = {
       const f = new FormData(form);
       D.name = f.get("name");
       D.bot = { provider: f.get("provider"), url: f.get("url"), model: f.get("model"), key: f.get("key"), takes: f.get("any") ? "any" : "sent" };
+      if (P[D.bot.provider]?.relay) { D.bot.price_in = f.get("price_in") || null; D.bot.price_out = f.get("price_out") || null; }
       if (!B.provider) D.skin = { ...D.skin, hat: D.skin.hat === "straw" ? "headphones" : D.skin.hat };
       this.renderHatchLook();
     });
@@ -3394,7 +3410,8 @@ const UI = {
     const everyS = P.every_s || 900, everySel = h("select", { name: "every" }, EVERY.map(([l, s]) => h("option", { value: l, text: `every ${l}`, selected: s === everyS })));
     if (!EVERY.some(e => e[1] === everyS)) everySel.prepend(h("option", { value: "", text: `every ${everyLabel(everyS)} (now)`, selected: true }));
     const hostSel = h("select", { name: "host" }, h("option", { value: "", text: "any Claude that lets it" }),
-      (m.hosts || []).map(id => h("option", { value: id, text: App.state?.agents.find(a => a.id === id)?.name || id, selected: P.host === id })));
+      (m.hosts || []).map(id => { const a = App.state?.agents.find(x => x.id === id);
+        return h("option", { value: id, text: (a?.name || id) + (a?.bot ? ` (bot on ${a.bot.model})` : ""), selected: P.host === id }); }));
     const onBox = h("input", { type: "checkbox", name: "on", checked: !!P.on });
     const planner = section("THE PLANNER", [
       h("label", { class: "check toggle" }, onBox, "PLANNER ON"),

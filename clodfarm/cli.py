@@ -18,7 +18,7 @@
     clodfarm slack                    Slack: connected or not, and how to connect it (the UI's SLACK button is easier)
     clodfarm browser [status] | start|stop [PROFILE] | open URL [--profile P] | add|remove NAME   the farm's browser
     clodfarm browser proxy on|off [PROFILE] [--country us]   through the farm's proxy (set in the UI), or direct
-    clodfarm bot add NAME --provider openrouter|ollama|custom --model M [--url U] [--any]   a bot on another model
+    clodfarm bot add NAME --provider openai|xai|gemini|groq|openrouter|ollama|... --model M [--any]   another model
     clodfarm init                     create the DynamoDB table
     clodfarm doctor                   check claude, login, the store, git and the workspace
 
@@ -130,7 +130,9 @@ def _seat_text(r) -> str:
     boxes = f"  boxes: {', '.join(r['boxes'])}" if r["boxes"] else "  (no live box)"
     lines = [f"SEAT {seat}{boxes}"]
     if seat.startswith("bot-"):
-        lines.append("  a bot on another model: no Claude usage; it pauses when its provider rate-limits it")
+        spent = d.details.get("spent_today_usd", 0)
+        lines.append("  a bot on another model: no Claude usage; it pauses when its provider rate-limits it"
+                     + (f"; ${spent:.2f} spent today at list price" if spent else ""))
     elif p.api_mode:
         cap = f"${p.daily_budget_usd:.2f}/day" if p.daily_budget_usd else "no daily cap (set FARM_DAILY_BUDGET_USD)"
         lines.append(f"  API key, list-price spend ${d.details.get('spent_today_usd', 0):.2f} today, {cap}")
@@ -1127,18 +1129,20 @@ def cmd_ui_passwd(cfg, a):
 
 
 def cmd_bot(cfg, a):
-    """Add a bot: Claude Code on another model, through a provider that speaks Anthropic's Messages API. The
-    farm UI's process starts it within seconds (its agents are kept running there)."""
+    """Add a bot: Claude Code on another model, through a provider that speaks Anthropic's Messages API or (through
+    its own relay) OpenAI's. The farm UI's process starts it within seconds (its agents are kept running there)."""
     import getpass
     from . import bots
     from .agents import AgentManager
     if a.sub != "add":
-        print("usage: clodfarm bot add NAME --provider openrouter|ollama|custom --model MODEL [--url URL] [--any]\n"
+        print(f"usage: clodfarm bot add NAME --provider {'|'.join(bots.PROVIDERS)} --model MODEL [--url URL] [--any]\n"
               "(release a bot in the farm UI, like any Claude)", file=sys.stderr)
         return 2
     try:
         bot = bots.parse({"provider": a.provider, "url": a.url, "model": a.model, "workers": a.workers,
-                          "takes": "any" if a.any else "sent"})
+                          "takes": "any" if a.any else "sent", "effort": a.effort, "max_out": a.max_out,
+                          "price_in": a.price_in, "price_out": a.price_out, "price_cached": a.price_cached,
+                          "daily_usd": a.daily_usd})
         need = bots.PROVIDERS[bot["provider"]]["key"]
         if a.key_env:
             key = os.environ.get(a.key_env, "")
@@ -1153,11 +1157,38 @@ def cmd_bot(cfg, a):
         return 1
     # registered only: the farm UI's process starts it (a child of this command would outlive it, and run twice)
     agent = AgentManager(cfg).create(a.name, bot=bot, key=key, start=False)
+    try:  # from the box's shell: the manager's (it may host the planner)
+        _store(cfg).put_claude(agent["id"], name=agent["name"], hat=agent.get("hat"), hatched_by="manager",
+                               bot=bot["model"])
+    except Exception as e:  # noqa: BLE001 - the farm hasn't made its store yet: the bot is added all the same
+        print(f"clodfarm: {agent['id']} isn't marked as the manager's yet ({e}); to run the planner on it, add it "
+              f"again once the farm runs", file=sys.stderr)
     _store(cfg).event("agent.added", f"{agent['id']} added: a bot on {bot['model']} via {bots.label(bot)}", by=cfg.name)
     print(f"bot {agent['id']} added: {bot['model']} via {bots.label(bot)} answered \"{said}\". The farm UI's process "
           f"starts it in a few seconds; send it work with `clodfarm spawn ... --on {agent['id']}`"
           + (" (it also takes any sub-agent)" if bot["takes"] == "any" else ""))
+    if bots.relayed(bot):
+        from . import prices
+        p = prices.price(bot["provider"], bot["model"], bot.get("price"))
+        print(f"its spend is counted at ${p[0]:g} in / ${p[2]:g} out per million tokens" if p else
+              f"no list price is known for {bot['model']}: its spend shows as $0 unless you add it again with "
+              f"--price-in and --price-out")
     return 0
+
+
+def _bot_providers():
+    from . import bots
+    return bots.PROVIDERS
+
+
+def cmd_relay(cfg, a):
+    """A bot's relay (relay.py), started by the bot's own `clodfarm run`."""
+    from . import relay
+    tag = a.tag or ""
+    if not tag.startswith("relay-"):
+        print("clodfarm relay: started by a bot's `clodfarm run`, as --tag relay-<bot>", file=sys.stderr)
+        return 2
+    return relay.main(tag[len("relay-"):])
 
 
 def _in_claude() -> bool:
@@ -1709,16 +1740,26 @@ def main(argv=None):
         q.add_argument("--board", default=argparse.SUPPRESS, help="whose board (a Claude's name; default: yours)")
         q.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     add("slack", cmd_slack, "give the farm work from Slack: status, or how to connect it")
-    bt = add("bot", cmd_bot, "add a bot: Claude Code on another model (OpenRouter, Ollama, any Anthropic-compatible API)")
+    bt = add("bot", cmd_bot, "add a bot: Claude Code on another model (OpenAI, xAI, Gemini, Groq, OpenRouter, Ollama, "
+                             "any OpenAI- or Anthropic-compatible API)")
     bts = bt.add_subparsers(dest="sub")
     ba = bts.add_parser("add", help="add a bot; its API key is read from stdin (or --key-env)")
     ba.add_argument("name")
-    ba.add_argument("--provider", default="openrouter", choices=["openrouter", "ollama", "custom"])
-    ba.add_argument("--model", required=True, help="the model, as the provider names it (qwen/qwen3-coder:free)")
+    ba.add_argument("--provider", default="openrouter", choices=list(_bot_providers()))
+    ba.add_argument("--model", required=True, help="the model, as the provider names it (gpt-6.1-sol, grok-4.7, "
+                                                   "gemini-3.1-pro-preview, qwen/qwen3-coder:free)")
     ba.add_argument("--url", help="the provider's base URL (default: the provider's own)")
     ba.add_argument("--workers", type=int, default=1, help="sub-agents it runs at a time (1-4; free tiers: 1)")
     ba.add_argument("--any", action="store_true", help="take any sub-agent, not only the ones sent to it")
     ba.add_argument("--key-env", help="read the API key from this environment variable instead of stdin")
+    ba.add_argument("--effort", help="reasoning effort, for a model that has one (minimal, low, medium, high)")
+    ba.add_argument("--max-out", type=int, help="cap on output tokens per answer, for a model with a lower limit")
+    ba.add_argument("--price-in", type=float, help="its list price per million input tokens, USD (default: known "
+                                                   "prices)")
+    ba.add_argument("--price-out", type=float, help="its list price per million output tokens, USD")
+    ba.add_argument("--price-cached", type=float, help="its list price per million cached input tokens, USD")
+    ba.add_argument("--daily-usd", type=float, help="stop starting its sub-agents once it spent this much today")
+    add("relay", cmd_relay, argparse.SUPPRESS).add_argument("--tag", required=True, help=argparse.SUPPRESS)
     br = add("browser", cmd_browser, "the farm's browser: you log in to sites in the UI, the Claudes use it")
     brs = br.add_subparsers(dest="sub")
     brs.add_parser("status", help="every profile: on or off, and its tabs")

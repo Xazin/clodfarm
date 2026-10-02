@@ -299,6 +299,8 @@ dialog[open] { animation: pop .14s steps(3); }
 @keyframes pop { from { transform: scale(.94); opacity: 0; } }
 .x { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; border: 3px solid var(--ink); border-radius: 6px; background: var(--paper-2); font: 12px var(--font-px); }
 .dlg-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.row2[hidden] { display: none; }
 pre, .pre {
   white-space: pre-wrap; word-break: break-word; font: 19px/1.15 var(--font-body);
   background: #fff; border: 3px solid var(--paper-2); border-radius: 4px; padding: 10px; margin: 6px 0 0;

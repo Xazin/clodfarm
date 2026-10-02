@@ -54,8 +54,9 @@ your week.
 - **Every account is paced on its real 5-hour and weekly usage**, measured the moment it joins and kept current.
 - **A whiteboard for every Claude:** you sketch, it draws whole architectures (Mermaid, laid out by the farm),
   flows, plans and art, live, and everyone on the farm sees every board. See [docs/whiteboard.md](docs/whiteboard.md).
-- **Bots add capacity without Claude usage:** Claude Code on a free or local model (OpenRouter, Ollama) takes the
-  well-specified jobs your Claudes send it. See [docs/bots.md](docs/bots.md).
+- **Bots add other models:** Claude Code on GPT, Grok, Gemini, Groq, a free model on OpenRouter or a local one on
+  Ollama takes the jobs your Claudes send it, and can even run the planner while the Claudes write the code. See
+  [docs/bots.md](docs/bots.md).
 
 <p align="center">
   <img src="assets/architecture.png" alt="How clodfarm works, drawn as the farm in its HD pixel art: on your phone you ask your Claude (matan, with the gold arrow) for work over Remote Control, down the dirt path and through the gate of the fenced field; it works at its plot with three mini-Claude sub-agents, one running on gil's account; gil works at the next plot with a sub-agent of its own; noa naps in the yard by the barn because its budget is paced; the barn is the shared store and git repo, the board beside it runs schedules, and the scarecrow in the field's corner is the planner" width="100%">
@@ -449,9 +450,10 @@ Code's own environment variables but aren't tested yet. PRs welcome.
 <details>
 <summary><b>Can it use other models, like free ones?</b></summary>
 
-Yes, as **bots**: Claude Code on another model through any provider that speaks Anthropic's API (OpenRouter's free
-models, a local Ollama, a LiteLLM gateway). They use no Claude usage, take only the sub-agents sent to them, and
-your Claudes check their work. See [docs/bots.md](docs/bots.md).
+Yes, as **bots**: Claude Code on another model. OpenAI, xAI (Grok), Gemini, Groq and any OpenAI-compatible server go
+through the bot's own relay; OpenRouter, a local Ollama or a LiteLLM gateway speak Anthropic's API directly. They use
+no Claude usage, take only the sub-agents sent to them, are counted at their model's list price, and one can run the
+planner. See [docs/bots.md](docs/bots.md).
 </details>
 
 <a name="related-projects"></a>

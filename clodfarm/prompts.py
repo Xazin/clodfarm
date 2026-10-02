@@ -195,8 +195,8 @@ def task_system_prompt(cfg, task: dict, cwd: str, branch: str | None, name: str 
     where = f"Your worktree is {cwd} on branch {branch}." if branch else f"Your working directory is {cwd}."
     reach = (f" Other Claudes reach you with `clodfarm msg {task['id']}`" +
              (f" or with SendMessage to the session '{name}'." if name else "."))
-    bot = (f" You run on {cfg.bot}, not on Claude: you are the farm's bot {cfg.name}. Your own sub-agents stay on you."
-           if cfg.bot else "")
+    bot = (f" You run on {cfg.bot}, not on Claude: you are the farm's bot {cfg.name}. Your own sub-agents stay on you"
+           " unless you send them to another Claude with --on." if cfg.bot else "")
     return (farm_guide() + f"\n## This run\nYou are a sub-agent of {task.get('owner') or cfg.name}: sub-agent "
             f"{task['id']} (depth {task.get('depth', 0)}, max depth {cfg.max_depth}). FARM_TASK_ID={task['id']}. {where}"
             f"{reach}{bot}\n")
@@ -309,14 +309,25 @@ of. Keep it under 300 lines.
   it on the farm).
 - Nothing useful to do now (waiting on people, on budget, or done): `clodfarm planner idle 1h` and end.
 - Stay within the Safety rules: no email, posting, spending or accounts unless the goal says the manager wants it.
-
+{host}
 Last cycle's result:
 {last}
 """
 
 
-def planner_prompt(goal: str, cycle: int, every: str, notes_path: str, notes: str, snapshot: str, last: str) -> str:
+PLANNER_ON_BOT = """
+## You run on {bot}, not on Claude
+You are a bot: Claude Code on {bot}. A sub-agent you start without --on stays on you. Send the coding (anything
+that changes the repo: building, fixing, deploying) to a Claude with `--on <claude>`: Claude Code on Claude writes the
+code here. Give research, writing, analysis and reviews to yourself or to the other bots (`--on <bot>`). Say in each
+prompt everything the sub-agent needs: it doesn't see your notebook.
+"""
+
+
+def planner_prompt(goal: str, cycle: int, every: str, notes_path: str, notes: str, snapshot: str, last: str,
+                   bot: str = "") -> str:
     return PLANNER_PROMPT.format(goal=goal.strip() or "(none set)", cycle=cycle, every=every, notes_path=notes_path,
                                  notes=("Your notebook now:\n" + notes.strip()[-12000:]) if notes.strip()
                                  else "Your notebook is empty: this is your first cycle.",
-                                 snapshot=snapshot, last=(last or "(none: first cycle)")[-3000:])
+                                 snapshot=snapshot, last=(last or "(none: first cycle)")[-3000:],
+                                 host=PLANNER_ON_BOT.format(bot=bot) if bot else "")

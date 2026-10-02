@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.9.0 (2026-10-02)
+
+- **Bots on OpenAI, xAI (Grok), Gemini and Groq.** Add one from + NEW CLAUDE → BOT, or `clodfarm bot add gpt
+  --provider openai --model gpt-6.1-sol` (also `xai`, `gemini`, `groq`, `openai-compatible`). Claude Code only speaks
+  Anthropic's API, so each such bot gets its own relay: a small server on 127.0.0.1 that its `clodfarm run` starts,
+  which translates Claude Code's calls to OpenAI's Responses API (OpenAI) or Chat Completions (the others), streamed
+  or not. Text, images, tool calls and their results go both ways. The model's reasoning (OpenAI's reasoning
+  summaries, Grok's reasoning, Gemini's thoughts) shows as thinking. What a model must see again on the next turn
+  (OpenAI's encrypted reasoning, Gemini's thought signatures) goes back with it. A 429 still pauses the bot, and a
+  full context makes Claude Code compact. The provider's key stays with the relay. Adding a bot checks it through
+  the same translation, with a tool on offer. Tested with real Claude Code on gpt-6.1-sol, grok-4.7 and
+  gemini-3.1-pro-preview.
+- **What a bot costs.** A bot on the relay is counted at its model's list price: the price you give it
+  (`--price-in/--price-out/--price-cached`, or the form's $/M fields), else the ones the farm knows. `--daily-usd`
+  stops starting its sub-agents once it spent that much today. `clodfarm budget` and the planner show each bot's
+  spend. `--effort` sets a model's reasoning effort, and `--max-out` caps its output.
+- **The planner on any model.** MANAGE → THE PLANNER → RUNS ON (or `clodfarm planner host <bot>`) can pick a bot the
+  manager added: the planner thinks on GPT, Grok or Gemini, sends the coding to the Claudes with `--on <claude>`,
+  and keeps research and writing on the bots. It sees every bot's model and spend. See docs/planner.md.
+
 ## 1.8.1 (2026-10-01)
 
 - Whiteboards work on Python 3.10 and 3.11 (1.8.0 needed 3.12; its image was never published).

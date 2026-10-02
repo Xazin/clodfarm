@@ -246,6 +246,9 @@ class AgentManager:
             self._save([a for a in self._load() if a["id"] != aid])
         try:
             self.stop_proc(aid)
+            if agent.get("bot") and bots.relayed(agent["bot"]):
+                from . import relay
+                relay.stop(self.cfg.workspace, aid)
             s = self.logins.pop(aid, None)
             if s:
                 s.kill()
