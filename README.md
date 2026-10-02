@@ -20,6 +20,16 @@
   <img src="https://img.shields.io/badge/deploy-AWS%20in%2010%20min-FF9900?logo=amazonaws&logoColor=white&labelColor=4a3b2c" alt="AWS deploy">
 </p>
 
+<p align="center">
+  <a href="docs/bots.md"><img src="https://img.shields.io/badge/Claude-Anthropic-D97757?logo=anthropic&logoColor=white&labelColor=4a3b2c" alt="Claude (Anthropic)"></a>
+  <a href="docs/bots.md"><img src="https://img.shields.io/badge/GPT-OpenAI-10A37F?labelColor=4a3b2c" alt="GPT (OpenAI)"></a>
+  <a href="docs/bots.md"><img src="https://img.shields.io/badge/Grok-xAI-000000?logo=x&logoColor=white&labelColor=4a3b2c" alt="Grok (xAI)"></a>
+  <a href="docs/bots.md"><img src="https://img.shields.io/badge/Gemini-Google-4285F4?logo=googlegemini&logoColor=white&labelColor=4a3b2c" alt="Gemini (Google)"></a>
+  <a href="docs/bots.md"><img src="https://img.shields.io/badge/Groq-open%20models-F55036?labelColor=4a3b2c" alt="Groq"></a>
+  <a href="docs/bots.md"><img src="https://img.shields.io/badge/OpenRouter-free%20models-6566F1?logo=openrouter&logoColor=white&labelColor=4a3b2c" alt="OpenRouter"></a>
+  <a href="docs/bots.md"><img src="https://img.shields.io/badge/Ollama-local-FFFFFF?logo=ollama&logoColor=black&labelColor=4a3b2c" alt="Ollama"></a>
+</p>
+
 <h3 align="center">A farm of Claude Code agents that builds your apps, puts them in the cloud, takes the payments and
 buys the traffic. Around the clock, on your Claude subscription.</h3>
 
@@ -57,6 +67,32 @@ your week.
 - **Bots add other models:** Claude Code on GPT, Grok, Gemini, Groq, a free model on OpenRouter or a local one on
   Ollama takes the jobs your Claudes send it, and can even run the planner while the Claudes write the code. See
   [docs/bots.md](docs/bots.md).
+
+### Every AI provider
+
+Your Claudes run on your Claude subscription. Next to them, **bots** run Claude Code on any other lab's model, with
+the same tools, sub-agents, worktrees and messages. A bot can take the jobs your Claudes send it, or run the
+[planner](docs/planner.md) while the Claudes write the code. Each one is counted at its model's list price.
+
+| Provider | Models (for example) | How Claude Code reaches it | Its reasoning on the farm |
+|---|---|---|---|
+| **Anthropic** | Opus, Sonnet, Haiku | your subscription (or an API key) | thinking |
+| **OpenAI** | `gpt-6.1-sol`, `gpt-5.5`, `gpt-5.3-codex` | the bot's relay, on OpenAI's Responses API | reasoning summaries |
+| **xAI** | `grok-4.7`, `grok-build-0.1` | the bot's relay, on Chat Completions | reasoning |
+| **Google** | `gemini-3.1-pro-preview`, `gemini-3.8-flash` | the bot's relay, on Gemini's OpenAI-compatible API | thoughts |
+| **Groq** | `openai/gpt-oss-120b`, Kimi, Llama | the bot's relay, on Chat Completions | when the model gives it |
+| **OpenRouter** | free models (`:free`) | Anthropic's API, directly | when the model gives it |
+| **Ollama** | any local model that calls tools | Anthropic's API, directly | when the model gives it |
+| **Anything else** | vLLM, LM Studio, LiteLLM, a gateway | OpenAI- or Anthropic-compatible | when the model gives it |
+
+```bash
+clodfarm bot add gpt    --provider openai --model gpt-6.1-sol             <<< "$OPENAI_API_KEY"
+clodfarm bot add grok   --provider xai    --model grok-4.7                <<< "$XAI_API_KEY"
+clodfarm bot add gemini --provider gemini --model gemini-3.1-pro-preview  <<< "$GEMINI_API_KEY"
+clodfarm planner host gemini    # the planner thinks on Gemini; the Claudes write the code
+```
+
+See [docs/bots.md](docs/bots.md).
 
 <p align="center">
   <img src="assets/architecture.png" alt="How clodfarm works, drawn as the farm in its HD pixel art: on your phone you ask your Claude (matan, with the gold arrow) for work over Remote Control, down the dirt path and through the gate of the fenced field; it works at its plot with three mini-Claude sub-agents, one running on gil's account; gil works at the next plot with a sub-agent of its own; noa naps in the yard by the barn because its budget is paced; the barn is the shared store and git repo, the board beside it runs schedules, and the scarecrow in the field's corner is the planner" width="100%">
