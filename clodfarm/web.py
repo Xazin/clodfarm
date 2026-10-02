@@ -15,16 +15,18 @@ Who sees what:
 Behind a reverse proxy: FARM_UI_BASE=/team serves it under a path prefix, FARM_UI_SECURE=1 marks the cookie Secure,
 and FARM_UI_TRUST_PROXY=1 takes the client address from X-Forwarded-For (for the login lockout).
 
-An invite (MANAGE -> INVITE A CLAUDE, or `clodfarm invite`) is a link that lets one person hatch a Claude of their own
-here, once, whether the farm is private or its hatching is closed: it's used up at their login, not when it's opened
-(a chat app's preview doesn't spend it).
+An invite (+ ADD AGENT -> INVITE SOMEONE, or `clodfarm invite`) is a link that lets one person add an agent of their
+own here, once, whether the farm is private or its hatching is closed: their Claude subscription (it logs in), or an
+agent on an API key (a bot: GPT, Grok, Gemini...). It's used up when they add it, not when it's opened (a chat app's
+preview doesn't spend it).
 
 Hosted for someone else: FARM_UI_PRIVATE=1 keeps the farm private whatever its settings say, FARM_UI_SSO_KEY lets the
 host sign its customer in with a one-time /sso link (sso.py), and FARM_MAX_CLAUDES caps the Claudes the farm hatches
 (agents.py), the manager's included.
 
-Standard library only. No passwords: people sign in with their Claude (a pairing link or code), and cookies are
-HMAC-signed and HttpOnly; every write needs a JSON body and the X-Clodfarm header, so another site can't drive the
+Standard library only. People sign in with their Claude (a pairing link or code it gives them), or with a username
+and password they chose for their Claude or bot (PBKDF2, the same lockout as codes). Cookies are HMAC-signed and
+HttpOnly; every write needs a JSON body and the X-Clodfarm header, so another site can't drive the
 farm through your browser.
 """
 
@@ -132,6 +134,9 @@ class Keys:
 def _pw_hash(password: str, salt_b64: str | None = None) -> tuple[str, str]:
     salt = base64.b64decode(salt_b64) if salt_b64 else secrets.token_bytes(16)
     return base64.b64encode(salt).decode(), _hash(password, salt)
+
+
+USERNAME = re.compile(r"[a-z0-9][a-z0-9._-]{2,31}")
 
 
 class Who:
@@ -996,9 +1001,10 @@ def make_handler(ui: FarmUI):
                 who = self._who()
                 if path == "/api/me":
                     st = ui.store.settings()
+                    login = ui.store.login_of(who.owner) if who.owner else None
                     return self._json({**who.view(), "user": "farmer" if who.manager else None, "farm": ui.cfg.farm,
                                        "version": __version__, "private": ui.private(st),
-                                       "invite": bool(self._invited()),
+                                       "invite": bool(self._invited()), "username": (login or {}).get("SK"),
                                        "hatch": self._hatch_view(who)}, 200 if who.can_view else 401)
                 if not who.can_view:
                     return self._err(401, "this farm is private: log in first")
@@ -1115,6 +1121,48 @@ def make_handler(ui: FarmUI):
             ui._views.clear()
             return self._json({"ok": True, "claude": cid}, extra={"Set-Cookie": self._owner_cookie(cid)})
 
+        def _signin(self, data: dict):
+            """POST /api/signin {username, password}: the person of a Claude (or bot) signs this device in to it."""
+            ip = self._ip()
+            if ui.lock.locked_out(ip):
+                return self._err(429, "too many tries: wait five minutes")
+            name = str(data.get("username") or "").strip().lower()[:40]
+            pw = str(data.get("password") or "")[:200]
+            rec = ui.store.login(name) if USERNAME.fullmatch(name) else None
+            ok = bool(rec and pw and hmac.compare_digest(_pw_hash(pw, rec["salt"])[1], rec["hash"]))
+            if not ok or not ui.manager.get(rec["claude"]):
+                ui.lock.fail(ip)
+                return self._err(401, "that username and password don't match")
+            ui.lock.clear(ip)
+            ui.store.put_claude(rec["claude"], owned=True)
+            ui.store.event("owner.signin", f"{rec['claude']}'s person signed in with their username", by="ui")
+            ui._views.clear()
+            return self._json({"ok": True, "claude": rec["claude"]}, extra={"Set-Cookie": self._owner_cookie(rec["claude"])})
+
+        def _account(self, data: dict, need: bool = False) -> tuple[str, str] | None:
+            """A username and password from a hatch or an invite ({account: {username, password}}), checked; None when
+            none was given (ValueError when one is needed, or wrong, or taken)."""
+            acct = data.get("account") if isinstance(data.get("account"), dict) else {}
+            name = str(acct.get("username") or "").strip().lower()
+            pw = str(acct.get("password") or "")
+            if not name and not pw:
+                if need:
+                    raise ValueError("pick a username and password: an agent on an API key has no Claude to sign you in")
+                return None
+            if not USERNAME.fullmatch(name):
+                raise ValueError("a username is 3 to 32 letters, digits, dots, dashes or underscores")
+            if not 8 <= len(pw) <= 200:
+                raise ValueError("a password is 8 characters or more")
+            if ui.store.login(name):
+                raise ValueError("that username is taken: pick another")
+            return name, pw
+
+        def _keep_account(self, cid: str, acct: tuple[str, str] | None):
+            if acct:
+                salt, hashed = _pw_hash(acct[1])
+                if not ui.store.put_login(acct[0], cid, salt, hashed):
+                    raise ValueError("that username is taken: pick another")
+
         def _pair_link(self):
             """GET /pair/<token>: the link a Claude gives its person in the Claude app. Signs this device in to that
             Claude (once; the link then stops working) and opens the farm."""
@@ -1175,26 +1223,42 @@ def make_handler(ui: FarmUI):
             return got[0] if got and ui.store.invite(got[0]) else None
 
         def _hatch_invited(self, data: dict):
-            """POST /api/agents {invite: true}: the invited person's own Claude, waiting for their login."""
+            """POST /api/agents {invite: true}: the invited person's own agent. Their Claude, waiting for its login;
+            or with {bot: {...}} an agent on their API key, kept once its model answers (then {account: {username,
+            password}} is a must: there's no Claude to sign them in later)."""
             th = self._invited()
             if not th:
                 return self._err(410, "that invite was used or has expired: ask for a new one")
             store, mgr = ui.store, ui.manager
-            a = mgr.create(str(data.get("name", "")), start=False)  # the plan's cap first (ValueError: 400)
+            is_bot = isinstance(data.get("bot"), dict)
+            acct = self._account(data, need=is_bot)  # before anything is made (ValueError: 400)
+            said = None
+            if is_bot:
+                bot = bots.parse(data["bot"])
+                key = bots.check_key(bot["provider"], str(data["bot"].get("key") or ""))
+                if mgr.max_claudes() is not None and len(mgr.all()) - 1 >= mgr.max_claudes():
+                    raise ValueError(room_note(mgr.max_claudes()))
+                said = bots.check(bot, key)
+                a = mgr.create(str(data.get("name", "")), bot=bot, key=key, start=False)
+            else:
+                a = mgr.create(str(data.get("name", "")), start=False)  # the plan's cap first (ValueError: 400)
             if not store.take_invite(th):  # someone was quicker with the same link
                 mgr.remove(a["id"])
                 return self._err(410, "that invite was just used: ask for a new one")
             tools = policy.clean(None)
             store.put_claude(a["id"], name=a["name"], hat=a.get("hat"), approve_missions=True, tools=tools, owned=True,
-                             hatched_by="invite")
+                             hatched_by="invite", bot=a["bot"]["model"] if is_bot else None)
             policy.save(a["config_dir"], tools, claude=a["id"])
-            store.event("agent.added", f"{a['id']} hatched with an invite (waiting for its login); its person approves "
-                        "every mission", by="ui")
+            self._keep_account(a["id"], acct)
+            what = f"a bot on {a['bot']['model']} via {bots.label(a['bot'])}" if is_bot else "waiting for its login"
+            store.event("agent.added", f"{a['id']} hatched with an invite ({what}); its person approves every mission"
+                        + ("; they sign in with a username" if acct else ""), by="ui")
             ui._state_cache = None
             ui._views.clear()
-            mgr.start_login(a["id"])
+            if not is_bot:
+                mgr.start_login(a["id"])
             self.send_response(200)
-            body = json.dumps({"id": a["id"], "name": a["name"]}).encode()
+            body = json.dumps({"id": a["id"], "name": a["name"], "said": said}).encode()
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Set-Cookie", self._owner_cookie(a["id"]))
@@ -1251,8 +1315,11 @@ def make_handler(ui: FarmUI):
                         not (self.headers.get("Content-Type") or "").startswith("application/json"):
                     return self._err(403, "missing X-Clodfarm header or JSON body")
                 data = self._body()
-                if path == "/api/login":  # there are no passwords: people sign in with their Claude
-                    return self._err(410, "this farm has no password: sign in with your Claude (\"farm login\" in the Claude app)")
+                if path == "/api/login":  # no farm password: people sign in with their Claude, or their own username
+                    return self._err(410, "this farm has no password: sign in with your Claude (\"farm login\" in the "
+                                          "Claude app), or with your username and password")
+                if path == "/api/signin":
+                    return self._signin(data)
                 if path == "/api/logout":
                     self.send_response(200)
                     for c in (self._cookie("", 0), self._named_cookie(VIEWER_COOKIE, "", 0)):  # old manager cookies too
@@ -1295,6 +1362,26 @@ def make_handler(ui: FarmUI):
             ui._tasks_cache.clear()
             if path in ("/api/agents",):  # hatching: anyone who may watch, once (see _hatch_view)
                 return self._hatch(data, who)
+            if path == "/api/account":  # the username and password that sign you in to your Claude, your choice
+                if not who.owner:
+                    return self._err(403, "sign in to your Claude first: a username belongs to a Claude")
+                if data.get("remove"):
+                    store.drop_logins(who.owner)
+                    store.event("owner.account", f"{who.owner}'s person removed their username", by="ui")
+                    return self._json({"username": None})
+                acct = data.get("account") if isinstance(data.get("account"), dict) else {}
+                mine = store.login_of(who.owner)
+                if mine and str(acct.get("username") or "").strip().lower() == mine["SK"]:
+                    store.drop_logins(who.owner)  # the same name, a new password: not "taken"
+                try:
+                    acct = self._account({"account": acct}, need=True)
+                    self._keep_account(who.owner, acct)
+                except ValueError:
+                    if mine and not store.login_of(who.owner):  # put the old one back
+                        store.put_login(mine["SK"], who.owner, mine["salt"], mine["hash"])
+                    raise
+                store.event("owner.account", f"{who.owner}'s person set a username to sign in with", by="ui")
+                return self._json({"username": acct[0]})
             m = re.fullmatch(r"/api/approvals/([A-Za-z0-9]{6,40})/(approve|deny)", path)
             if m:
                 pid, action = m.groups()
@@ -1475,6 +1562,9 @@ def make_handler(ui: FarmUI):
             tools = policy.clean(data.get("tools"))
             approve = bool(data.get("approve_missions", not who.manager))
             skin = _skin(data.get("skin"))
+            # a username and password for it, if its person wants one: a must for a bot this browser becomes the person
+            # of, which has no Claude to sign them in later
+            acct = self._account(data, need=isinstance(data.get("bot"), dict) and not who.owner)
             if isinstance(data.get("bot"), dict):  # a bot: kept once its provider answers
                 bot = bots.parse(data["bot"])
                 key = bots.check_key(bot["provider"], str(data["bot"].get("key") or ""))
@@ -1490,6 +1580,7 @@ def make_handler(ui: FarmUI):
                              hatched_by="manager" if who.manager else "public",
                              bot=a["bot"]["model"] if a.get("bot") else None)
             policy.save(a["config_dir"], tools, claude=a["id"])
+            self._keep_account(a["id"], acct)
             store.event("agent.added", f"{a['id']} hatched from the farm UI ({what})"
                         + ("; its person approves every mission" if approve else "")
                         + (f"; tools off: {', '.join(tools['deny'])}" if tools["deny"] else ""), by="ui")

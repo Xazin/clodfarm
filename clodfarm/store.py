@@ -27,6 +27,7 @@ Items (PK / SK):
     HELD               / <message id>      a message waiting for its recipient's person to approve it
     STATS              / TOKENS[#day|@claude]  tokens burned (input, output, cache write, cache read)
     PAIR               / <token hash>      a one-time link (or code) that signs a person in to their Claude
+    LOGIN              / <username>        a username and password that sign a person in to their Claude (or bot)
     EVENT#<yyyy-mm-dd> / <ts>#<rand>       event log (expires after 30 days)
 """
 
@@ -812,9 +813,36 @@ class Store:
         return self._update("CLAUDE", cid, fn, create=True)
 
     def forget_claude(self, cid: str):
+        self.drop_logins(cid)
         it = self.b.get("CLAUDE", cid)
         if it:
             self.b.delete("CLAUDE", cid, expect_ver=int(it.get("ver", 0)))
+
+    # --------------------------------------------------------------- logins
+    def login(self, username: str) -> dict | None:
+        """The username and password that sign a person in to their Claude: its salt and hash, and which Claude."""
+        return self.b.get("LOGIN", username) if username else None
+
+    def login_of(self, cid: str) -> dict | None:
+        return next((it for it in self.b.query("LOGIN") if it.get("claude") == cid), None)
+
+    def put_login(self, username: str, cid: str, salt: str, hashed: str) -> bool:
+        """A Claude's username and password (one per Claude: an old one goes). False when the username is someone
+        else's."""
+        old = self.b.get("LOGIN", username)
+        if old and old.get("claude") != cid:
+            return False
+        for it in self.b.query("LOGIN"):
+            if it.get("claude") == cid and it["SK"] != username:
+                self.b.delete("LOGIN", it["SK"])
+        item = {"PK": "LOGIN", "SK": username, "ver": int((old or {}).get("ver", 0)) + 1, "claude": cid,
+                "salt": salt, "hash": hashed, "at": now()}
+        return self.b.put(item, expect_ver=int((old or {}).get("ver", 0)))
+
+    def drop_logins(self, cid: str):
+        for it in self.b.query("LOGIN"):
+            if it.get("claude") == cid:
+                self.b.delete("LOGIN", it["SK"])
 
     # --------------------------------------------------------------- settings
     SETTINGS = {"private": False, "hatch_open": True, "max_claudes": 100, "hatch_per_ip_hour": 3, "mcp": True}

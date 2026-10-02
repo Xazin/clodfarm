@@ -19,8 +19,8 @@ farm use another lab's model where that model is the better fit. The farm keeps 
 
 ## Add one
 
-In the farm UI: **+ NEW CLAUDE → BOT: OTHER MODEL**. Pick the provider, name the model, paste the API key and click
-**CHECK & ADD BOT**. The farm asks the model for one word first and keeps the bot only if it answers. The bot is on
+In the farm UI: **+ ADD AGENT → ADD AGENT WITH API KEY**. Pick the provider (its endpoint is filled in; tick EDIT
+ENDPOINT for another one), name the model, paste the API key and click **CHECK & ADD AGENT**. The farm asks the model for one word first and keeps the bot only if it answers. The bot is on
 the farm a few seconds later, wearing headphones.
 
 From a shell (the key is read from stdin, or from an environment variable with `--key-env`):

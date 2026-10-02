@@ -39,7 +39,7 @@ The toolbar, bottom right (hover a button, or tab to it, for its name and key):
 | Clipboard | `J` | The TASKS page (below): every sub-agent and schedule, and what you can do to them. |
 | Whiteboard | `W` | Every Claude's whiteboard: you draw and write, your Claude draws diagrams and art, everyone sees every board ([whiteboard.md](whiteboard.md)). |
 | Globe | `B` | The farm's browser: log in to sites there and the Claudes use those logins ([browser.md](browser.md)). |
-| **+ NEW CLAUDE** | `C` | Add a Claude login, or a [bot](bots.md). |
+| **+ ADD AGENT** | `C` | Add a Claude subscription, or an agent on an API key (a [bot](bots.md): GPT, Grok, Gemini...); the manager can invite someone. |
 
 ## The TASKS page
 
@@ -64,7 +64,8 @@ back to wait for another Claude with budget, and it no longer shows on the farm.
 
 ## Adding Claudes ("hatching")
 
-The container's own login is the farm's first Claude. **+ NEW CLAUDE** (or an egg on the farm) adds another one:
+The container's own login is the farm's first Claude. **+ ADD AGENT → ADD CLAUDE SUBSCRIPTION** (or an egg on the
+farm) adds another one:
 
 1. The UI creates a Claude config dir for it (`~/.claude/clodfarm-agents/<name>`, inside the claude-home volume, so
    the login survives a new container) and starts `claude auth login` for it in a pseudo-terminal.
@@ -77,8 +78,9 @@ The container's own login is the farm's first Claude. **+ NEW CLAUDE** (or an eg
 Log in with a different Claude account for each person. **Release** stops that Claude (its sub-agents wait for
 another Claude with budget), logs it out and deletes its config dir.
 
-**BOT: OTHER MODEL** in the same dialog adds a [bot](bots.md) instead: Claude Code on another model (OpenRouter,
-Ollama, any Anthropic-compatible API), with no login. The farm checks that the model answers before it keeps it.
+**ADD AGENT WITH API KEY** adds a [bot](bots.md) instead: Claude Code on another model (OpenAI, xAI, Gemini, Groq,
+OpenRouter, Ollama, any OpenAI- or Anthropic-compatible API), with no login. Each provider's endpoint is shown, and
+EDIT ENDPOINT changes it. The farm checks that the model answers before it keeps it.
 
 The token and API key from the container's environment (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) are never
 passed to hatched Claudes: each one uses only its own login.

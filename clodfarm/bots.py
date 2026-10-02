@@ -1,6 +1,6 @@
 """Bots: farm members that run another model (OpenAI, Grok, Gemini, a free or a local one) through Claude Code.
 
-A bot is added like any other Claude (the farm UI's + NEW CLAUDE, or ``clodfarm bot add``): its own Claude config
+A bot is added like any other Claude (the farm UI's + ADD AGENT → ADD AGENT WITH API KEY, or ``clodfarm bot add``): its own Claude config
 dir, its own ``clodfarm run``. Instead of a Claude login it has a provider, and Claude Code talks to it through
 ``ANTHROPIC_BASE_URL``: straight to one that speaks Anthropic's Messages API (OpenRouter, a local Ollama, a LiteLLM
 gateway...), or through the bot's own relay (relay.py) to one that speaks OpenAI's API (OpenAI through its Responses

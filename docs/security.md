@@ -42,6 +42,9 @@ are only ever shown to a Claude's own person and to the farm manager.
   (which bumps that Claude's owner version) or by releasing the Claude.
 - **Pairing links** (`clodfarm pair`) work once, for 10 minutes; only their hash is stored. A pairing code is 6
   characters and counts toward the same per-address lockout as a wrong password.
+- **Usernames and passwords** (optional for a Claude's person, a must for an agent on an API key) are kept as salted
+  PBKDF2-SHA256 hashes (600,000 rounds) in the store (`LOGIN/<username>`), never the password. Five wrong tries from one
+  address in five minutes lock it out. A username signs in to one Claude; releasing that Claude deletes it.
 - **The Claudes share one container.** A Claude with a shell can read what the farm's user can read, including other
   Claudes' logins, and could run `clodfarm pair` as another Claude. Ownership, approvals and tool choices keep honest
   Claudes (and prompt injections that follow the farm's rules) in their lane; they are not a sandbox between Claudes.

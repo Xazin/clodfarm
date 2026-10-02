@@ -91,6 +91,32 @@ textarea { resize: vertical; min-height: 90px; }
 label.check { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 label.check input { width: 20px; height: 20px; margin: 0; accent-color: var(--clay); }
 .hatch-kind { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; }
+/* ADD AN AGENT: two big choices */
+.add-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 4px 0 14px; }
+.add-choice {
+  display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 18px 12px 16px;
+  font: 11px/1.5 var(--font-px); color: var(--ink); background: var(--paper); border: 3px solid var(--ink); border-radius: 10px;
+  box-shadow: 0 4px 0 var(--ink); cursor: pointer; transition: transform .06s;
+}
+.add-choice:hover { background: #fff; }
+.add-choice:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--ink); }
+.add-choice:focus-visible { outline: 3px solid var(--clay); outline-offset: 2px; }
+.add-choice b { font-size: 12px; }
+.add-choice .muted { font: 15px/1.2 var(--font-body); }
+.add-icons { display: flex; justify-content: center; min-height: 44px; }
+.add-icons img { width: 44px; height: 44px; padding: 6px; background: #fff; border: 3px solid var(--ink); border-radius: 50%; box-sizing: border-box; }
+.add-icons img + img { margin-left: -12px; }
+@media (max-width: 560px) { .add-choices { grid-template-columns: 1fr; } }
+.invite-box { border-top: 3px dashed var(--paper-2); padding-top: 12px; }
+/* a provider's endpoint, shown until EDIT ENDPOINT */
+code.endpoint { display: block; font: 15px/1.3 var(--font-body); padding: 8px 10px; background: var(--paper-2); border-radius: 6px; word-break: break-all; }
+code.endpoint[hidden] { display: none; }
+.prov-pick { display: flex; align-items: center; gap: 8px; }
+.prov-pick select { flex: 1; }
+.prov-logo { width: 28px; height: 28px; flex: none; }
+.prov-logo[hidden] { display: none; }
+fieldset.acct-fields { border: 3px solid var(--paper-2); border-radius: 8px; padding: 8px 12px 4px; margin: 12px 0; }
+fieldset.acct-fields legend { font: 10px/1 var(--font-px); padding: 0 6px; }
 .hatch-kind .btn { flex: 1 1 140px; }
 input[type=range] { width: 100%; accent-color: var(--clay); margin-top: 8px; }
 output { color: var(--clay-2); }
@@ -189,6 +215,13 @@ output { color: var(--clay-2); }
 .dock .hatch-tool:hover { background: #e4865f; }
 .dock .hatch-tool img { width: 40px; height: 40px; }
 .dock .hatch-tool .lbl { font-size: 11px; text-shadow: 2px 2px 0 #6b2f1f; }
+/* + ADD AGENT: the providers an agent can run on, as three overlapping marks */
+.prov-ic { display: flex; align-items: center; }
+.prov-ic[hidden] { display: none; }
+.prov-ic img, .dock .hatch-tool .prov-ic img { width: 26px; height: 26px; padding: 3px; background: #fff8e8; border: 2px solid #6b2f1f;
+  border-radius: 50%; box-sizing: border-box; image-rendering: auto; }
+.prov-ic img + img { margin-left: -8px; }
+@media (max-width: 760px) { .prov-ic img, .dock .hatch-tool .prov-ic img { width: 22px; height: 22px; } }
 .dock .hatch-tool.off { opacity: .6; filter: grayscale(.6); }
 /* a new farm: the one thing to do, like a game's PRESS START (a bouncing arrow, a pulse, a shine across) */
 .dock .hatch-tool.call { animation: call-pulse 1.2s ease-in-out infinite; overflow: visible; }
