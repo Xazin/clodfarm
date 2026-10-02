@@ -1644,7 +1644,7 @@ const EVENT_TEXT = {
   "farm.resumed": () => "The farm is back at work!",
   "budget.rejected": () => "A Claude hit its usage limit. It rests until the window resets; the others carry on.",
   "rc.connected": (e) => `${((e.msg.match(/'([^']+)'/) || [])[1] || "A Claude").toUpperCase()} is live in the Claude app: talk to it from your phone.`,
-  "agent.added": (e) => / a bot on /.test(e.msg) ? `${e.msg.split(" ")[0].toUpperCase()} joined the farm: a bot on ${e.msg.split(" a bot on ")[1].replace(/\)?;.*$|\)$/, "")}.`
+  "agent.added": (e) => /\ba bot on /.test(e.msg) ? `${e.msg.split(" ")[0].toUpperCase()} joined the farm: a bot on ${e.msg.split(/\ba bot on /)[1].replace(/\)?;.*$|\)$/, "")}.`
     : `A new egg for ${e.msg.split(" ")[0].toUpperCase()}. It hatches once its person logs it in.`,
   "slack.received": (e) => `FROM SLACK · ${e.msg.slice(0, 120)}`,
   "slack.connected": () => "The farm is on Slack! DM it or @mention it in a channel, and a sub-agent answers in the thread.",
