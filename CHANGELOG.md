@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.10.0 (2026-10-02)
+
+- **+ ADD AGENT.** The dock's + NEW CLAUDE / + INVITE A CLAUDE is now + ADD AGENT, with the Claude, OpenAI and Grok
+  marks. It opens two big choices: **ADD CLAUDE SUBSCRIPTION** (a Claude account logs in) and **ADD AGENT WITH API
+  KEY** (Claude Code on GPT, Grok, Gemini, Groq or another model, paid by its key). The manager can invite someone
+  from there too.
+- **Each provider's endpoint, shown.** The agent form shows the provider's mark and its endpoint, each checked
+  against its provider. EDIT ENDPOINT changes it, and a gateway of yours asks for one.
+- **Generic invites.** The person you invite picks **MY CLAUDE SUBSCRIPTION** (it logs in) or **MY AGENT ON AN API
+  KEY** (checked with its model before it's kept). Their agent joins the farm as theirs.
+- **Sign in with a username and password**, next to a code from your Claude. Pick one when you add your agent
+  (optional with a Claude; a must with an API key, which has no Claude to sign you in), or in SETTINGS → SIGN IN WITH
+  A USERNAME. Passwords are kept as salted PBKDF2 hashes. Five wrong tries lock an address out for five minutes.
+- The title screen (an invite, the sign-in) scrolls on a phone or a small window. The ticker no longer calls a bot
+  added from the farm UI "a new egg".
+
 ## 1.9.0 (2026-10-02)
 
 - **Bots on OpenAI, xAI (Grok), Gemini and Groq.** Add one from + NEW CLAUDE → BOT, or `clodfarm bot add gpt
