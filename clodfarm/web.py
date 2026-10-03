@@ -52,7 +52,7 @@ from . import __version__, boards, boot, bots, browser, connectors, dashboards, 
 from . import mcp
 from .agents import AgentManager, room_note
 from .slack import SlackBridge
-from .store import Store, now
+from .store import Store, hmac_eq, now
 
 BASE = "/" + os.environ.get("FARM_UI_BASE", "").strip("/") if os.environ.get("FARM_UI_BASE", "").strip("/") else ""
 UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
@@ -612,9 +612,98 @@ class FarmUI:
                 "five_hour_resets": snap.five_hour.resets_at if snap and snap.five_hour else None,
                 "seven_day": snap.seven_day.utilization if snap and snap.seven_day else None,
                 "seven_day_resets": snap.seven_day.resets_at if snap and snap.seven_day else None,
-                "can_start": max(0, (d.workers if d else 0) - running), "max": self.cfg.policy.max_workers,
+                "can_start": max(0, (d.workers if d else 0) - running), "max": r["policy"].max_workers,
+                "five_hour_ceiling": r["policy"].five_hour_ceiling, "weekly_target": r["policy"].weekly_target,
                 "reason": d.reason if d else "", "measured": snap.observed_at if snap else None},
         }
+
+
+    # ---------------------------------------------------------- usage telemetry + per-seat limits
+    def seat_claudes(self) -> dict[str, list[str]]:
+        """Which Claudes run on which seat (Claude account), from their heartbeats."""
+        out: dict[str, set] = {}
+        for w in self.store.workers(max_age=86400):
+            if w.get("seat"):
+                out.setdefault(w["seat"], set()).add(w["SK"].split("/")[0].split("@")[0])
+        return {k: sorted(v) for k, v in out.items()}
+
+    def can_edit_limits(self, who, seat: str, claudes: dict | None = None) -> bool:
+        if who.manager:
+            return True
+        return bool(who.owner) and who.owner in (claudes if claudes is not None else self.seat_claudes()).get(seat, [])
+
+    def usage_view(self, who, seat: str | None, hours: float) -> dict:
+        from .cli import _seats, usage_summary
+        claudes = self.seat_claudes()
+        rows = [r for r in _seats(self.cfg, self.store) if not r["seat"].startswith(("bot-", "api-"))]
+        since = now() - hours * 3600
+        out = []
+        for r in rows:
+            if seat and r["seat"] != seat:
+                continue
+            p, snap, d = r["policy"], r["snapshot"], r["decision"]
+            pts = self.store.usage_history(r["seat"], since)
+            out.append({
+                "seat": r["seat"], "claudes": claudes.get(r["seat"], []),
+                "can_edit": self.can_edit_limits(who, r["seat"], claudes),
+                "limits": {"five_hour_ceiling": p.five_hour_ceiling, "weekly_target": p.weekly_target,
+                           "max_workers": p.max_workers, "own": r.get("limits") or {}},
+                "now": None if not snap else {
+                    "five_hour": snap.five_hour.utilization if snap.five_hour else None,
+                    "five_hour_resets": snap.five_hour.resets_at if snap.five_hour else None,
+                    "seven_day": snap.seven_day.utilization if snap.seven_day else None,
+                    "seven_day_resets": snap.seven_day.resets_at if snap.seven_day else None,
+                    "measured": snap.observed_at, "status": snap.status},
+                "decision": {"workers": d.workers, "reason": d.reason, "running": len(r["slots"])},
+                "summary": {"five_hour": usage_summary(pts, "five_hour"), "seven_day": usage_summary(pts, "seven_day")},
+                "points": [{k: x.get(k) for k in ("t", "five_hour", "seven_day")} for x in pts],
+            })
+        pol = self.cfg.policy
+        return {"since": since, "hours": hours, "seats": out,
+                "defaults": {"five_hour_ceiling": pol.five_hour_ceiling, "weekly_target": pol.weekly_target,
+                             "max_workers": pol.max_workers}}
+
+    def metrics_text(self) -> str:
+        """Prometheus text format: per-seat utilization, limits and the governor's decision."""
+        from .cli import _seats
+        claudes = self.seat_claudes()
+        lines = []
+
+        def metric(name, help_, typ, samples):
+            lines.append(f"# HELP clodfarm_{name} {help_}")
+            lines.append(f"# TYPE clodfarm_{name} {typ}")
+            for labels, v in samples:
+                if v is None:
+                    continue
+                lab = ",".join(f'{k}="{str(val).replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34))}"'
+                               for k, val in labels.items())
+                lines.append(f"clodfarm_{name}{{{lab}}} {float(v):g}")
+
+        rows = [r for r in _seats(self.cfg, self.store) if not r["seat"].startswith("bot-")]
+        lab = lambda r, **kw: {"seat": r["seat"], "claudes": " ".join(claudes.get(r["seat"], [])), **kw}  # noqa: E731
+        util, resets = [], []
+        for r in rows:
+            snap = r["snapshot"]
+            for window, w in (("five_hour", snap and snap.five_hour), ("seven_day", snap and snap.seven_day)):
+                if w:
+                    util.append((lab(r, window=window), w.utilization))
+                    resets.append((lab(r, window=window), w.resets_at))
+        metric("utilization_ratio", "Share of the Claude usage window used (0-1), as Claude Code reports it", "gauge", util)
+        metric("window_resets_timestamp_seconds", "When the usage window resets (unix time)", "gauge", resets)
+        metric("limit_ratio", "Share of the window at which this seat's agents stop", "gauge",
+               [(lab(r, window="five_hour"), r["policy"].five_hour_ceiling) for r in rows]
+               + [(lab(r, window="seven_day"), r["policy"].weekly_target) for r in rows])
+        metric("max_workers", "Most agents this seat may run at once", "gauge",
+               [(lab(r), r["policy"].max_workers) for r in rows])
+        metric("allowed_workers", "Agents the governor allows to start now", "gauge",
+               [(lab(r), r["decision"].workers) for r in rows])
+        metric("running_workers", "Agents running now (concurrency slots held)", "gauge",
+               [(lab(r), len(r["slots"])) for r in rows])
+        metric("usage_measured_timestamp_seconds", "When the usage was last measured (unix time)", "gauge",
+               [(lab(r), r["snapshot"].observed_at) for r in rows if r["snapshot"]])
+        metric("overage_in_use", "1 when the account draws on paid overage", "gauge",
+               [(lab(r), 1 if r["snapshot"].using_overage else 0) for r in rows if r["snapshot"]])
+        return "\n".join(lines) + "\n"
 
 
 # -------------------------------------------------------------------- handler
@@ -996,6 +1085,18 @@ def make_handler(ui: FarmUI):
                     return self._static(path[len("/browser/novnc/"):], browser.novnc_dir())
                 if path == "/api/browser/screen":
                     return self._browser_screen()
+                if path in ("/usage", "/usage/"):
+                    return self._page("usage.html")
+                if path == "/metrics":  # Prometheus: a bearer token (FARM_METRICS_TOKEN), or anyone who may watch
+                    tok = os.environ.get("FARM_METRICS_TOKEN", "")
+                    given = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
+                    if not ((tok and hmac_eq(given, tok)) or (not tok and self._who().can_view)):
+                        return self._err(401, "set Authorization: Bearer <FARM_METRICS_TOKEN>")
+                    body = ui.metrics_text().encode()
+                    self._headers(200, "text/plain; version=0.0.4; charset=utf-8", {"Cache-Control": "no-store"},
+                                  len(body))
+                    self.wfile.write(body)
+                    return
                 if not path.startswith("/api/"):
                     return self._static(path.lstrip("/"))
                 who = self._who()
@@ -1051,6 +1152,13 @@ def make_handler(ui: FarmUI):
                     if not (who.manager or who.owner):
                         return self._err(403, "only a Claude's person approves its missions")
                     return self._json(self._approvals(who))
+                if path == "/api/usage":  # usage history and limits per seat (the usage page, scripts): anyone who watches, like the Claudes' cards
+                    q = {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
+                    try:
+                        hours = max(1.0, min(24 * 35.0, float(q.get("hours") or 24)))
+                    except ValueError:
+                        hours = 24.0
+                    return self._json(ui.usage_view(who, q.get("seat") or None, hours))
                 if path == "/api/tools":  # the groups a person can turn off, for the hatch and SETTINGS forms
                     return self._json(policy.groups_view())
                 if not (who.manager or who.owner):
@@ -1409,6 +1517,14 @@ def make_handler(ui: FarmUI):
                 t = store.get_task(m.group(1)) or {}
                 if not (who.owns(t.get("owner")) or who.owns(t.get("to"))):
                     return self._err(403, "only the person of the Claude it belongs to (or the farm manager)")
+            if path == "/api/limits":  # one seat's own usage limits: the manager, or the person of a Claude on it
+                seat = str(data.get("seat") or "")
+                if not seat or not ui.can_edit_limits(who, seat):
+                    return self._err(403, "only the farm manager or the person of a Claude on that seat sets its limits")
+                lim = {k: data[k] for k in ("five_hour_ceiling", "weekly_target", "max_workers") if data.get(k) is not None}
+                clear = [k for k in (data.get("clear") or []) if isinstance(k, str)]
+                store.set_seat_limits(seat, lim, clear=clear, by="manager" if who.manager else f"owner:{who.owner}")
+                return self._json(ui.usage_view(who, seat, 24))
             if path.startswith("/api/browser/"):
                 return self._browser_post(path, data, who)
             if path == "/api/schedules":

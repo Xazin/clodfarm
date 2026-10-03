@@ -61,11 +61,53 @@ If a run ends with `status: rejected`, or with a usage-limit error in its text, 
 doesn't count toward `max_attempts`) and the task is re-queued. The rejection becomes the budget snapshot, and every
 worker on every box pauses until the reported reset time.
 
+## Per-seat limits
+
+Every seat (Claude account) can have its own limits over the farm-wide defaults, so one person can keep their Claude
+at 50% of each 5-hour window while another lets theirs run to 85%:
+
+```bash
+clodfarm limits                                          # every seat's limits (* = its own)
+clodfarm limits --claude mathias --five-hour 50 --weekly 60
+clodfarm limits --seat friend-9c1d --max-workers 1
+clodfarm limits --claude mathias --clear                 # back to the defaults
+```
+
+The farm manager, or the person of a Claude on that seat, can also set them on the farm's **USAGE** page (dock: U).
+They're kept in the farm's store, so every box on that seat picks them up within a few minutes, with no restart.
+`FARM_SEAT_LIMITS` (JSON, see `.env.example`) sets them from the environment; what's stored wins.
+
+| Limit | Default from | Meaning |
+|---|---|---|
+| `five_hour_ceiling` | `FARM_FIVE_HOUR_CEILING` | agents stop at this share of a 5-hour window |
+| `weekly_target` | `FARM_WEEKLY_TARGET` | agents stop at this share of the 7-day window (and the week is paced towards it) |
+| `max_workers` | `FARM_MAX_WORKERS` | at most this many agents at once; it can lower the box's `FARM_MAX_WORKERS`, not raise it |
+
+There's no daily window in Claude's limits: "half of my usage" means a 5-hour ceiling of 0.5, a weekly target of
+0.5, or both.
+
+## Usage telemetry
+
+Every usage report is also kept as history: one point per seat and minute, for `FARM_USAGE_HISTORY_DAYS` (35) days.
+
+- **USAGE page** (`/usage`): each seat's 5-hour and weekly utilization over 5 h, 24 h, 7 d or 30 d, the line its
+  agents stop at, and what the governor is doing.
+- **CLI:** `clodfarm usage [--claude NAME | --seat S] [--hours 24] [--json | --csv]`.
+- **JSON:** `GET /api/usage?hours=24[&seat=S]`.
+- **Prometheus:** `GET /metrics` with `clodfarm_utilization_ratio`, `clodfarm_limit_ratio`,
+  `clodfarm_window_resets_timestamp_seconds`, `clodfarm_allowed_workers`, `clodfarm_running_workers`,
+  `clodfarm_max_workers`, `clodfarm_usage_measured_timestamp_seconds` and `clodfarm_overage_in_use`, labelled by
+  `seat`, `claudes` and `window`. Set `FARM_METRICS_TOKEN` to require `Authorization: Bearer <token>`.
+
+Usage is measured from every agent run, and every `FARM_USAGE_REFRESH` seconds (300) while a Claude is idle, so an
+idle farm still draws a line.
+
 ## Tuning
 
 | Want | Set |
 |---|---|
 | more room for yourself | `FARM_WEEKLY_TARGET=0.7` |
+| one Claude at half of each 5-hour window | `clodfarm limits --claude NAME --five-hour 50` |
 | agents only in a quiet week | `FARM_WEEKLY_TARGET=0.5` |
 | run only at night | `clodfarm pause` / `clodfarm resume` from cron |
 | more parallelism | `FARM_MAX_WORKERS=6` (and a bigger box: about 400-600 MB RAM per agent) |

@@ -42,12 +42,13 @@ import secrets
 import time
 
 from .backends import Backend, DynamoBackend, SqliteBackend
-from .governor import Snapshot
+from .governor import SEAT_LIMITS, Snapshot, clean_limits
 from .schedule import next_run
 
 EVENT_TTL = 30 * 86400
 APPROVAL_TTL = 86400  # a mission nobody approved in a day is denied
 DEFAULT_SEAT = "default"  # single-account farms and tests
+USAGE_TTL = int(os.environ.get("FARM_USAGE_HISTORY_DAYS", "35")) * 86400  # how long the usage history is kept
 _RETRIES = 50
 
 
@@ -748,6 +749,63 @@ class Store:
         new = {"seat": seat, **snap.to_dict()}
         self._update("BUDGET", seat, lambda x: dict(new) if float(x.get("observed_at", -1)) < snap.observed_at else None,
                      create=True)
+        try:
+            self.record_usage(snap, seat)
+        except Exception as e:  # history is telemetry: never let it break the budget snapshot
+            print(f"usage history: {e}", flush=True)
+
+    def record_usage(self, snap: Snapshot, seat: str = DEFAULT_SEAT):
+        """One point of usage history per seat and minute (the newest observation in that minute wins), kept
+        FARM_USAGE_HISTORY_DAYS days. Partitioned per seat and UTC day, so a day is one query on either backend."""
+        if not (snap.five_hour or snap.seven_day):
+            return
+        t = float(snap.observed_at)
+        minute = int(t // 60 * 60)
+        point = {"PK": f"USAGE#{seat}#{time.strftime('%Y-%m-%d', time.gmtime(t))}",
+                 "SK": time.strftime("%H:%M", time.gmtime(minute)), "ver": 1, "seat": seat, "t": t,
+                 "status": snap.status, "overage": bool(snap.using_overage), "expires_at": int(t + USAGE_TTL)}
+        if snap.five_hour:
+            point.update(five_hour=round(snap.five_hour.utilization, 4), five_hour_resets=snap.five_hour.resets_at)
+        if snap.seven_day:
+            point.update(seven_day=round(snap.seven_day.utilization, 4), seven_day_resets=snap.seven_day.resets_at)
+        old = self.b.get(point["PK"], point["SK"])
+        if old and float(old.get("t", 0)) >= t:
+            return
+        self.b.put({k: v for k, v in point.items() if v is not None})
+
+    def usage_history(self, seat: str, since: float, until: float | None = None) -> list[dict]:
+        """The usage points of one seat between two times, oldest first."""
+        until = until if until is not None else now()
+        out, day = [], since // 86400 * 86400
+        while day <= until:
+            pk = f"USAGE#{seat}#{time.strftime('%Y-%m-%d', time.gmtime(day))}"
+            out += [{k: v for k, v in i.items() if k not in ("PK", "SK", "ver", "expires_at")}
+                    for i in self.b.query(pk) if since <= float(i.get("t", 0)) <= until]
+            day += 86400
+        return sorted(out, key=lambda i: i["t"])
+
+    # ------------------------------------------------------------- seat limits
+    def seat_limits(self, seat: str) -> dict:
+        """Limits set for one seat with `clodfarm limits` or the usage page (over the FARM_* defaults)."""
+        it = self.b.get("LIMITS", seat) or {}
+        return {k: it[k] for k in SEAT_LIMITS if k in it}
+
+    def all_seat_limits(self) -> dict[str, dict]:
+        return {i["SK"]: {k: i[k] for k in SEAT_LIMITS if k in i} for i in self.b.query("LIMITS")}
+
+    def set_seat_limits(self, seat: str, limits: dict, clear: tuple | list = (), by: str = "human") -> dict:
+        """Set (or with ``clear`` drop) one seat's own limits. Raises ValueError on a value out of range."""
+        lim = clean_limits(limits)
+        drop = [k for k in clear if k in SEAT_LIMITS]
+
+        def fn(x):
+            x = {k: v for k, v in x.items() if k not in drop}
+            x.update(lim, seat=seat, by=by, at=now())
+            return x
+        rec = self._update("LIMITS", seat, fn, create=True) or {}
+        self.event("limits", f"seat {seat}: " + (", ".join(f"{k}={v}" for k, v in lim.items()) or "")
+                   + (f" cleared {', '.join(drop)}" if drop else ""), by=by)
+        return {k: rec[k] for k in SEAT_LIMITS if k in rec}
 
     def get_snapshot(self, seat: str = DEFAULT_SEAT) -> Snapshot | None:
         it = self.b.get("BUDGET", seat)

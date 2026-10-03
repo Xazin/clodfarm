@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import os
 import socket
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 
-from .governor import Policy
+from .governor import Policy, clean_limits, with_limits
 
 
 def _env(name: str, default: str) -> str:
@@ -70,6 +71,25 @@ class Config:
     bot_dialect: str  # FARM_BOT_DIALECT: "chat" or "responses" for a bot on the relay (relay.py), else ""
     bot_price: dict  # the bot's own list price, from FARM_BOT_OPTS ({"in", "cached", "out"} per million tokens)
     policy: Policy
+    # FARM_SEAT_LIMITS: per-seat limits over the farm-wide ones, {"<seat>": {"five_hour_ceiling": 0.5, ...}}.
+    # `clodfarm limits` (stored in the farm, shared by every box) wins over these.
+    seat_limits: dict = field(default_factory=dict)
+
+    def limits_for(self, store, seat: str) -> dict:
+        """This seat's own limits: FARM_SEAT_LIMITS, then what `clodfarm limits` / the usage page stored."""
+        stored = {}
+        try:
+            stored = store.seat_limits(seat) if store is not None else {}
+        except Exception:  # a store hiccup must never stop the governor: fall back to the env
+            stored = {}
+        return {**self.seat_limits.get(seat, {}), **stored}
+
+    def policy_for(self, store, seat: str) -> Policy:
+        """The governor's policy for one seat (Claude account)."""
+        try:
+            return with_limits(self.policy, self.limits_for(store, seat))
+        except ValueError:
+            return self.policy
 
     @property
     def mail_dir(self) -> str:
@@ -112,6 +132,18 @@ def _claude_name(farm: str, workspace: str) -> str:
         except (OSError, ValueError):
             pass
     return farm
+
+
+def _seat_limits() -> dict:
+    raw = os.environ.get("FARM_SEAT_LIMITS", "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return {str(seat): clean_limits(lim) for seat, lim in data.items() if isinstance(lim, dict)}
+    except (ValueError, AttributeError) as e:
+        print(f"FARM_SEAT_LIMITS ignored: {e}", flush=True)
+        return {}
 
 
 def _bot_price() -> dict:
@@ -190,4 +222,5 @@ def load() -> Config:
                                                         and not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")),
             daily_budget_usd=float(_env("FARM_DAILY_BUDGET_USD", "0")),
         ),
+        seat_limits=_seat_limits(),
     )

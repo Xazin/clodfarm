@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased (fork)
+
+- **Per-seat limits.** Each Claude account can stop at its own share of the 5-hour window and the week, and run its
+  own number of agents: `clodfarm limits --claude NAME --five-hour 50 --weekly 60`, the farm's USAGE page, or
+  `FARM_SEAT_LIMITS`. Stored in the farm, picked up by every box without a restart ([docs](docs/budget.md#per-seat-limits)).
+- **Usage telemetry.** Every usage report is kept as history (one point per seat and minute, 35 days). The new USAGE
+  page charts each seat's 5-hour and weekly usage against its limits; `clodfarm usage` prints it (or CSV), and
+  `/api/usage` and a Prometheus `/metrics` endpoint serve it ([docs](docs/budget.md#usage-telemetry)).
+
 ## 1.10.0 (2026-10-02)
 
 - **+ ADD AGENT.** The dock's + NEW CLAUDE / + INVITE A CLAUDE is now + ADD AGENT, with the Claude, OpenAI and Grok

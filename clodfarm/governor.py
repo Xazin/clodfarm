@@ -25,7 +25,7 @@ API key mode has no subscription windows: only a daily dollar cap applies.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 FIVE_HOURS = 5 * 3600
 SEVEN_DAYS = 7 * 24 * 3600
@@ -111,6 +111,33 @@ class Policy:
     allow_overage: bool = False  # never draw on paid extra usage unless told to
     api_mode: bool = False  # ANTHROPIC_API_KEY: pay per token, no subscription windows
     daily_budget_usd: float = 0.0  # API mode: stop for the day at this spend (0 = no cap)
+
+
+# Limits that can be set per seat (one Claude account), over the farm-wide FARM_* defaults. See docs/budget.md.
+SEAT_LIMITS = {"five_hour_ceiling": float, "weekly_target": float, "max_workers": int}
+
+
+def clean_limits(raw: dict | None) -> dict:
+    """Only the known per-seat limits, with sane types and ranges; unknown keys and None are dropped.
+    Raises ValueError on a value out of range (ceilings are shares of a window, 0-1)."""
+    out = {}
+    for k, v in (raw or {}).items():
+        if k not in SEAT_LIMITS or v is None or v == "":
+            continue
+        v = SEAT_LIMITS[k](v)
+        if k == "max_workers":
+            if not 0 <= v <= 64:
+                raise ValueError(f"max_workers must be 0-64, got {v}")
+        elif not 0.0 <= v <= 1.0:
+            raise ValueError(f"{k} must be a share between 0 and 1 (e.g. 0.5 for 50%), got {v}")
+        out[k] = v
+    return out
+
+
+def with_limits(policy: "Policy", limits: dict | None) -> "Policy":
+    """The policy for one seat: the farm-wide one with that seat's own limits laid over it."""
+    lim = clean_limits(limits)
+    return replace(policy, **lim) if lim else policy
 
 
 @dataclass

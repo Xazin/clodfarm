@@ -114,13 +114,15 @@ def _seats(cfg, store) -> list[dict]:
     out = []
     for seat in names:
         snap = snaps.get(seat)
-        policy = cfg.policy if seat.startswith("api-") == cfg.policy.api_mode else \
-            type(cfg.policy)(**{**vars(cfg.policy), "api_mode": seat.startswith("api-")})
+        base = cfg.policy_for(store, seat)  # the farm-wide limits with this seat's own laid over them
+        policy = base if seat.startswith("api-") == base.api_mode else \
+            type(base)(**{**vars(base), "api_mode": seat.startswith("api-")})
         if seat.startswith("bot-"):  # a bot: paced like an API key, on its own workers, with no money cap
-            policy = type(cfg.policy)(**{**vars(cfg.policy), "api_mode": True, "daily_budget_usd": 0.0,
+            policy = type(base)(**{**vars(base), "api_mode": True, "daily_budget_usd": 0.0,
                                          "max_workers": max(1, sum(w.get("seat") == seat for w in workers))})
         d = decide(snap, policy, now(), store.spent_today(seat))
         out.append({"seat": seat, "snapshot": snap, "decision": d, "policy": policy, "slots": store.slots(seat),
+                    "limits": cfg.limits_for(store, seat),
                     "boxes": sorted({w["SK"].rsplit("/", 1)[0] for w in workers if w.get("seat") == seat})})
     return out
 
@@ -128,7 +130,8 @@ def _seats(cfg, store) -> list[dict]:
 def _seat_text(r) -> str:
     seat, snap, d, p = r["seat"], r["snapshot"], r["decision"], r["policy"]
     boxes = f"  boxes: {', '.join(r['boxes'])}" if r["boxes"] else "  (no live box)"
-    lines = [f"SEAT {seat}{boxes}"]
+    lines = [f"SEAT {seat}{boxes}" + ("  (own limits: " + ", ".join(f"{k}={v}" for k, v in r["limits"].items()) + ")"
+                                      if r.get("limits") else "")]
     if seat.startswith("bot-"):
         spent = d.details.get("spent_today_usd", 0)
         lines.append("  a bot on another model: no Claude usage; it pauses when its provider rate-limits it"
@@ -158,7 +161,118 @@ def _budget_text(rows) -> str:
 
 def _seats_json(rows):
     return [{"seat": r["seat"], "snapshot": r["snapshot"].to_dict() if r["snapshot"] else None,
-             "decision": r["decision"].to_dict(), "slots": r["slots"], "boxes": r["boxes"]} for r in rows]
+             "decision": r["decision"].to_dict(), "slots": r["slots"], "boxes": r["boxes"],
+             "limits": {"five_hour_ceiling": r["policy"].five_hour_ceiling, "weekly_target": r["policy"].weekly_target,
+                        "max_workers": r["policy"].max_workers, "own": r.get("limits") or {}}} for r in rows]
+
+
+def seat_of_claude(store, name: str) -> str | None:
+    """The seat (Claude account) a Claude runs on, from its live heartbeats; None when it isn't up."""
+    for w in store.workers(max_age=86400):
+        if w["SK"].split("/")[0].split("@")[0] == name and w.get("seat"):
+            return w["seat"]
+    return None
+
+
+def _resolve_seat(cfg, store, a) -> str:
+    if getattr(a, "claude", None):
+        seat = seat_of_claude(store, a.claude)
+        if not seat:
+            raise SystemExit(f"no seat known for Claude {a.claude!r}: it has to have run once (see `clodfarm budget`)")
+        return seat
+    if getattr(a, "seat", None):
+        return a.seat
+    names = sorted(store.snapshots())
+    if len(names) == 1:
+        return names[0]
+    raise SystemExit("more than one seat on this farm: pick one with --seat or --claude ("
+                     + ", ".join(names) + ")")
+
+
+def _pct_arg(v: str) -> float:
+    """50, 50% and 0.5 all mean half a window."""
+    x = float(str(v).rstrip("%"))
+    return x / 100 if x > 1 else x
+
+
+def cmd_limits(cfg, a):
+    """Show or set each seat's own limits (over FARM_FIVE_HOUR_CEILING / FARM_WEEKLY_TARGET / FARM_MAX_WORKERS)."""
+    store = _store(cfg)
+    want = {k: v for k, v in (("five_hour_ceiling", a.five_hour), ("weekly_target", a.weekly),
+                              ("max_workers", a.max_workers)) if v is not None}
+    clear = [k for k, on in (("five_hour_ceiling", a.clear or a.clear_five_hour), ("weekly_target", a.clear or a.clear_weekly),
+                             ("max_workers", a.clear or a.clear_max_workers)) if on]
+    if want or clear:
+        seat = _resolve_seat(cfg, store, a)
+        try:
+            store.set_seat_limits(seat, want, clear=clear, by=os.environ.get("FARM_CLAUDE_NAME") or "cli")
+        except ValueError as e:
+            raise SystemExit(str(e))
+        if want.get("max_workers", 0) > cfg.policy.max_workers:
+            print(f"note: a box runs at most FARM_MAX_WORKERS={cfg.policy.max_workers} agents per Claude; "
+                  "raise that too for more", file=sys.stderr)
+    rows = [r for r in _seats(cfg, store) if not r["seat"].startswith("bot-")]
+    out = [{"seat": r["seat"], "own": r["limits"], "five_hour_ceiling": r["policy"].five_hour_ceiling,
+            "weekly_target": r["policy"].weekly_target, "max_workers": r["policy"].max_workers} for r in rows]
+    text = ["LIMITS per seat (* = the seat's own, the rest are the farm-wide FARM_* defaults)"]
+    for o in out:
+        mark = lambda k: "*" if k in o["own"] else " "  # noqa: E731
+        text.append(f"  {o['seat']:<24} 5-hour {o['five_hour_ceiling']:>4.0%}{mark('five_hour_ceiling')}  "
+                    f"weekly {o['weekly_target']:>4.0%}{mark('weekly_target')}  "
+                    f"agents {o['max_workers']}{mark('max_workers')}")
+    _out({"seats": out}, a.json, "\n".join(text))
+    return 0
+
+
+def _spark(values: list[float], width: int = 48) -> str:
+    if not values:
+        return ""
+    ticks = "▁▂▃▄▅▆▇█"
+    step = max(1, len(values) // width + (len(values) % width > 0))
+    buckets = [max(values[i:i + step]) for i in range(0, len(values), step)]
+    return "".join(ticks[min(7, int(v * 8))] for v in buckets)
+
+
+def usage_summary(points: list[dict], key: str) -> dict:
+    vals = [p[key] for p in points if p.get(key) is not None]
+    if not vals:
+        return {}
+    return {"now": vals[-1], "peak": max(vals), "avg": round(sum(vals) / len(vals), 4), "points": len(vals)}
+
+
+def cmd_usage(cfg, a):
+    """The usage history (telemetry) of one seat or all of them: 5-hour and weekly utilization over time."""
+    store = _store(cfg)
+    since = now() - a.hours * 3600
+    seats = [_resolve_seat(cfg, store, a)] if (a.seat or a.claude) else sorted(store.snapshots()) or ["default"]
+    data = {seat: store.usage_history(seat, since) for seat in seats}
+    if a.csv:
+        print("time,seat,five_hour,seven_day,five_hour_resets,seven_day_resets,status")
+        for seat, pts in data.items():
+            for p in pts:
+                print(",".join(str(x if x is not None else "") for x in (
+                    iso(p["t"]), seat, p.get("five_hour"), p.get("seven_day"), p.get("five_hour_resets"),
+                    p.get("seven_day_resets"), p.get("status", ""))))
+        return 0
+    rows = {r["seat"]: r for r in _seats(cfg, store)}
+    out, text = {}, [f"USAGE, the last {a.hours:g} h (from Claude Code's rate-limit reports; one point per minute at most)"]
+    for seat, pts in data.items():
+        pol = rows[seat]["policy"] if seat in rows else cfg.policy
+        out[seat] = {"five_hour": usage_summary(pts, "five_hour"), "seven_day": usage_summary(pts, "seven_day"),
+                     "limits": {"five_hour_ceiling": pol.five_hour_ceiling, "weekly_target": pol.weekly_target},
+                     "points": pts}
+        text.append(f"SEAT {seat}  ({len(pts)} points)")
+        for key, label, cap in (("five_hour", "5-hour", pol.five_hour_ceiling), ("seven_day", "7-day", pol.weekly_target)):
+            sm = out[seat][key]
+            if not sm:
+                continue
+            text.append(f"  {label:<7}{_spark([p[key] for p in pts if p.get(key) is not None])}")
+            text.append(f"  {'':<7}now {_pct(sm['now'])}  peak {_pct(sm['peak'])}  avg {_pct(sm['avg'])}  "
+                        f"agents stop at {cap:.0%}")
+        if not pts:
+            text.append("  no history yet: it fills in as this seat's agents run (and every FARM_USAGE_REFRESH seconds)")
+    _out({"since": since, "seats": out}, a.json, "\n".join(text))
+    return 0
 
 
 def cmd_budget(cfg, a):
@@ -1555,6 +1669,21 @@ def main(argv=None):
     add("status", cmd_status, "the Claudes, their budget and the sub-agents at work")
     add("budget", cmd_budget, "subscription usage and governor decision").add_argument(
         "--refresh", action="store_true", help="run a tiny agent call to measure usage now")
+    lm = add("limits", cmd_limits, "show or set each Claude account's own usage limits (5-hour, weekly, agents)")
+    lm.add_argument("--seat", help="the seat (Claude account) to change, as `clodfarm budget` shows it")
+    lm.add_argument("--claude", help="or the Claude by name: its seat is looked up")
+    lm.add_argument("--five-hour", type=_pct_arg, help="agents stop at this share of a 5-hour window (50, 50%% or 0.5)")
+    lm.add_argument("--weekly", type=_pct_arg, help="agents stop at this share of the 7-day window")
+    lm.add_argument("--max-workers", type=int, help="at most this many agents at once on this seat")
+    lm.add_argument("--clear", action="store_true", help="drop all of this seat's own limits (back to the defaults)")
+    lm.add_argument("--clear-five-hour", action="store_true", help=argparse.SUPPRESS)
+    lm.add_argument("--clear-weekly", action="store_true", help=argparse.SUPPRESS)
+    lm.add_argument("--clear-max-workers", action="store_true", help=argparse.SUPPRESS)
+    us = add("usage", cmd_usage, "usage history (telemetry): 5-hour and weekly utilization over time, per seat")
+    us.add_argument("--seat")
+    us.add_argument("--claude")
+    us.add_argument("--hours", type=float, default=24, help="how far back (default 24)")
+    us.add_argument("--csv", action="store_true", help="every point as CSV")
     sw = add("spawn", cmd_spawn, "start a sub-agent (any Claude with budget runs it, or --on NAME)")
     sw.add_argument("title")
     sw.add_argument("--prompt", help="full, self-contained instructions (default: the title); '-' reads stdin")

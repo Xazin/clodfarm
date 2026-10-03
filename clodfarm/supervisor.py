@@ -377,7 +377,7 @@ class Farm:
         os.replace(path + ".tmp", path)
 
     def print_status(self):
-        d = decide(self.store.get_snapshot(self.seat), self.cfg.policy, now(), self.store.spent_today(self.seat))
+        d = decide(self.store.get_snapshot(self.seat), self.cfg.policy_for(self.store, self.seat), now(), self.store.spent_today(self.seat))
         counts = {s: self.store.count(s) for s in ("queued", "running", "waiting")}
         print(json.dumps({"at": iso(), "status": counts, "budget": d.to_dict()}), flush=True)
 
@@ -647,8 +647,8 @@ class Farm:
             store.heartbeat(cfg.farm_id, wid, "draining", seat=self.seat)
             self.stop.wait(cfg.idle_sleep)
             return
-        # this seat's own budget decides; other seats in the farm are paced separately
-        d = decide(store.get_snapshot(self.seat), cfg.policy, now(), store.spent_today(self.seat))
+        # this seat's own budget decides, on this seat's own limits (`clodfarm limits`); other seats are paced separately
+        d = decide(store.get_snapshot(self.seat), cfg.policy_for(store, self.seat), now(), store.spent_today(self.seat))
         slot = store.acquire_slot(holder, d.workers, cfg.lease_seconds, self.seat) if d.workers else None
         task = None
         if slot is None:

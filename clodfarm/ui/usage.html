@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#4f6b25">
+<meta name="robots" content="noindex, nofollow">
+<title>Usage · clodfarm</title>
+<link rel="icon" href="{{BASE}}/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="{{BASE}}/fonts/PressStart2P.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="{{BASE}}/dash.css">
+<link rel="stylesheet" href="{{BASE}}/usage.css">
+<script src="{{BASE}}/usage.js" defer></script>
+</head>
+<body data-base="{{BASE}}">
+<header class="top">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a class="logo" href="{{BASE}}/" title="Back to the farm"><img src="{{BASE}}/logo.svg" alt="" width="28" height="32"><span>CLOD</span><span>FARM</span></a>
+    <span class="sep" aria-hidden="true">/</span>
+    <span id="crumb-here" aria-current="page">Usage</span>
+  </nav>
+  <div class="range" id="range" role="group" aria-label="Time range">
+    <button type="button" data-hours="5">5h</button>
+    <button type="button" data-hours="24" aria-pressed="true">24h</button>
+    <button type="button" data-hours="168">7d</button>
+    <button type="button" data-hours="720">30d</button>
+  </div>
+</header>
+<main class="wrap">
+  <p class="form-error bar-error" id="error" role="alert"></p>
+  <p class="usage-intro">Each Claude account (seat) with its 5-hour and weekly usage over time, as Claude Code reports it.
+    The dashed line is where that seat's agents stop. The farm manager, or the person of a Claude on a seat, can set
+    that seat's own limits.</p>
+  <div id="seats"></div>
+</main>
+</body>
+</html>

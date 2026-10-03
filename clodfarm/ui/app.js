@@ -2043,7 +2043,7 @@ const UI = {
     }
     addEventListener("keydown", (e) => {
       if ($("#hud").hidden || $$("dialog[open]").length || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
-      const k = { c: "hatch", h: "hatch", n: "hatch", s: "connectors", t: "talk", d: "dashboards", b: "browser", j: "tasks", w: "whiteboard", r: "roster", g: "manager",
+      const k = { c: "hatch", h: "hatch", n: "hatch", s: "connectors", t: "talk", d: "dashboards", b: "browser", j: "tasks", u: "usage", w: "whiteboard", r: "roster", g: "manager",
         a: "approvals", m: "menu", p: "planner", "?": "help", "0": "fit", f: "fit", "+": "zoomin", "=": "zoomin", "-": "zoomout" }[e.key.toLowerCase()];
       if (k) { e.preventDefault(); this.act(k); }
     });
@@ -2069,6 +2069,7 @@ const UI = {
     if (a === "dashboards" && person) location.href = "dashboards";
     if (a === "browser" && R.owner) location.href = "browser";
     if (a === "tasks") location.href = "tasks";
+    if (a === "usage") location.href = "usage";
     if (a === "whiteboard") location.href = "whiteboard";
   },
 

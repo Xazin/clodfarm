@@ -419,6 +419,8 @@ Every command takes `--json`.
 | `FARM_CLAUDE_UPDATE` | `3600` | update Claude Code to its newest release every this many seconds (0 = never), so new models arrive the day they ship |
 | `FARM_WEEKLY_TARGET` | `0.80` | agents stop at 80% of the weekly window |
 | `FARM_FIVE_HOUR_CEILING` | `0.85` | max share of a 5-hour window |
+| `FARM_SEAT_LIMITS` | *(empty)* | per-seat overrides of the two above and `FARM_MAX_WORKERS` (JSON); easier: `clodfarm limits` or the USAGE page ([docs](docs/budget.md#per-seat-limits)) |
+| `FARM_METRICS_TOKEN` | *(empty)* | bearer token for `/metrics` (Prometheus usage telemetry) |
 | `FARM_DAILY_BUDGET_USD` | `0` | API-key mode: daily cap (0 = none) |
 | `FARM_REPO_URL` | *(empty)* | repo to work in (required for more than one box) |
 | `FARM_VERIFY_CMD` | *(empty)* | check that must pass before landing, e.g. `pytest -q` |
